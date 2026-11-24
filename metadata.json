@@ -1,0 +1,6 @@
+{
+  "name": "Cipher Virtual",
+  "description": "Virtual workspace launcher, multi-instance app organizer, and gamepad keymapper studio compatible with Android 13 through Android 16.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,27 @@
+<resources>
+    <string name="app_name">Cipher Virtual</string>
+    <string name="nav_spaces">Spaces</string>
+    <string name="nav_permissions">Permissions</string>
+    <string name="nav_sandbox">Sandbox</string>
+    <string name="hero_title">Cipher Virtual Engine</string>
+    <string name="hero_subtitle">Isolated app spaces &amp; device permission bridges</string>
+    <string name="add_app">Add App</string>
+    <string name="new_space">New Space</string>
+    <string name="empty_space_title">No Virtual Apps Here Yet</string>
+    <string name="empty_space_body">Import installed apps into this space to manage multiple instances, display profiles, and device permissions.</string>
+    <string name="import_apps_cta">Import Installed Apps</string>
+    <string name="launch_in_space">Launch</string>
+    <string name="search_apps_hint">Search installed apps or packages…</string>
+    <string name="filter_all">All Apps</string>
+    <string name="filter_games">Games</string>
+    <string name="permissions_title">Device Access</string>
+    <string name="sandbox_settings_title">Sandbox Profile</string>
+    <string name="permissions_granted_label">Permissions</string>
+    <string name="virtual_apps_count">Virtual Apps</string>
+    <string name="engine_ready">Android 8–16 Ready</string>
+    <string name="cd_hero_banner">Virtual workspace engine cyber tentacles illustration</string>
+    <string name="cd_empty_space">Empty virtual container illustration</string>
+    <string name="cd_app_icon">Application icon</string>
+    <string name="play_integrity_title">Play Integrity Verification</string>
+    <string name="play_integrity_verify_now">Verify Now</string>
+</resources>
