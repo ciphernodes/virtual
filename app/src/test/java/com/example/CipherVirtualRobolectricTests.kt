@@ -2,8 +2,10 @@ package com.example
 
 import android.content.Context
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.performScrollToNode
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.example.data.hardware.DeviceProfileManager
@@ -105,6 +107,8 @@ class CipherVirtualRobolectricTests {
         }
 
         composeRule.onNodeWithTag("new_custom_profile_button").assertIsDisplayed()
+        composeRule.onNodeWithTag("sandbox_config_list")
+            .performScrollToNode(hasTestTag("security_dashboard_integrity_card"))
         composeRule.onNodeWithTag("security_dashboard_integrity_card").assertIsDisplayed()
     }
 }

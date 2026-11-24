@@ -98,6 +98,7 @@ fun SandboxConfigScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .widthIn(max = 920.dp)
+                .testTag("sandbox_config_list")
         ) {
             item {
                 Row(
