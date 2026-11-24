@@ -32,6 +32,7 @@ import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.DeleteOutline
+import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Layers
 import androidx.compose.material.icons.rounded.Memory
 import androidx.compose.material.icons.rounded.PlayArrow
@@ -97,7 +98,9 @@ fun SpacesScreen(
     onAddApp: (InstalledAppInfo) -> Unit,
     onDuplicateApp: (VirtualAppEntity) -> Unit,
     onRefreshInstalledApps: () -> Unit,
+    onRequestIcons: (List<String>) -> Unit,
     onOpenLaunchSession: (VirtualAppEntity) -> Unit,
+    onInspectApp: (VirtualAppEntity) -> Unit,
     onOpenPermissionsTab: () -> Unit,
     onOpenSandboxConfig: () -> Unit,
     onRemoveVirtualApp: (VirtualAppEntity) -> Unit,
@@ -358,6 +361,7 @@ fun SpacesScreen(
                             icon = uiState.appIcons[app.packageName],
                             accentColor = spaceAccent.accent,
                             onLaunchClick = { onOpenLaunchSession(app) },
+                            onInspectClick = { onInspectApp(app) },
                             onCloneAnotherClick = { onDuplicateApp(app) },
                             onRemoveClick = { onRemoveVirtualApp(app) },
                             modifier = Modifier.animateItem(
@@ -375,9 +379,11 @@ fun SpacesScreen(
         ImportInstalledAppsSheet(
             installedApps = uiState.installedApps,
             appsInSpace = uiState.appsInSpace,
+            appIcons = uiState.appIcons,
             isScanning = uiState.isScanningApps,
             activeSpaceName = activeSpace?.name ?: "Virtual Space",
             onRefresh = onRefreshInstalledApps,
+            onRequestIcons = onRequestIcons,
             onImportApp = onAddApp,
             onDismiss = { showImportSheet = false }
         )
@@ -547,6 +553,7 @@ private fun VirtualAppCard(
     icon: ImageBitmap?,
     accentColor: androidx.compose.ui.graphics.Color,
     onLaunchClick: () -> Unit,
+    onInspectClick: () -> Unit,
     onCloneAnotherClick: () -> Unit,
     onRemoveClick: () -> Unit,
     modifier: Modifier = Modifier
@@ -606,6 +613,18 @@ private fun VirtualAppCard(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
+                    )
+                }
+                IconButton(
+                    onClick = onInspectClick,
+                    modifier = Modifier
+                        .minimumInteractiveComponentSize()
+                        .testTag("inspect_app_button_${app.id}")
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Info,
+                        contentDescription = "Inspect ${app.displayName}",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
                 IconButton(

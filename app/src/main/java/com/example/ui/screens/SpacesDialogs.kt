@@ -44,6 +44,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -53,6 +54,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
@@ -76,14 +78,23 @@ private enum class ImportFilter {
     ALL
 }
 
+private enum class ImportSortOrder(val label: String) {
+    DEFAULT("Recommended"),
+    NAME("A–Z"),
+    SIZE("Size"),
+    TARGET_SDK("SDK")
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ImportInstalledAppsSheet(
     installedApps: List<InstalledAppInfo>,
     appsInSpace: List<VirtualAppEntity>,
+    appIcons: Map<String, ImageBitmap>,
     isScanning: Boolean,
     activeSpaceName: String,
     onRefresh: () -> Unit,
+    onRequestIcons: (List<String>) -> Unit,
     onImportApp: (InstalledAppInfo) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -91,13 +102,14 @@ fun ImportInstalledAppsSheet(
     val haptics = LocalHapticFeedback.current
     var query by remember { mutableStateOf("") }
     var filter by remember { mutableStateOf(ImportFilter.USER_APPS) }
+    var sortOrder by remember { mutableStateOf(ImportSortOrder.DEFAULT) }
 
     val instanceCountsByPackage = remember(appsInSpace) {
         appsInSpace.groupingBy { it.packageName }.eachCount()
     }
 
-    val filteredApps = remember(installedApps, query, filter) {
-        installedApps.filter { app ->
+    val filteredApps = remember(installedApps, query, filter, sortOrder) {
+        val filtered = installedApps.filter { app ->
             val matchesFilter = when (filter) {
                 ImportFilter.USER_APPS -> !app.isSystemApp
                 ImportFilter.GAMES -> app.isGame
@@ -107,6 +119,19 @@ fun ImportInstalledAppsSheet(
                 app.label.contains(query, ignoreCase = true) ||
                 app.packageName.contains(query, ignoreCase = true)
             matchesFilter && matchesQuery
+        }
+        when (sortOrder) {
+            ImportSortOrder.DEFAULT -> filtered
+            ImportSortOrder.NAME -> filtered.sortedBy { it.label.lowercase() }
+            ImportSortOrder.SIZE -> filtered.sortedByDescending { it.apkSizeMb }
+            ImportSortOrder.TARGET_SDK -> filtered.sortedByDescending { it.targetSdk }
+        }
+    }
+
+    LaunchedEffect(filteredApps) {
+        val visiblePackages = filteredApps.take(40).map { it.packageName }
+        if (visiblePackages.isNotEmpty()) {
+            onRequestIcons(visiblePackages)
         }
     }
 
@@ -197,6 +222,15 @@ fun ImportInstalledAppsSheet(
                         modifier = Modifier.testTag("filter_all_apps_chip")
                     )
                 }
+                ImportSortOrder.entries.forEach { order ->
+                    item {
+                        FilterChip(
+                            selected = sortOrder == order,
+                            onClick = { sortOrder = order },
+                            label = { Text(order.label) }
+                        )
+                    }
+                }
             }
 
             if (isScanning) {
@@ -230,6 +264,11 @@ fun ImportInstalledAppsSheet(
                     contentPadding = PaddingValues(bottom = 24.dp)
                 ) {
                     items(filteredApps, key = { it.packageName }) { appInfo ->
+                        LaunchedEffect(appInfo.packageName) {
+                            if (appInfo.icon == null && appIcons[appInfo.packageName] == null) {
+                                onRequestIcons(listOf(appInfo.packageName))
+                            }
+                        }
                         val existingCount = instanceCountsByPackage[appInfo.packageName] ?: 0
                         val sizePart = if (appInfo.apkSizeMb >= 0.1f) {
                             String.format(Locale.US, " • %.1f MB", appInfo.apkSizeMb)
@@ -248,7 +287,11 @@ fun ImportInstalledAppsSheet(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(12.dp)
                             ) {
-                                AppIconBadge(appName = appInfo.label, icon = appInfo.icon, size = 44.dp)
+                                AppIconBadge(
+                                    appName = appInfo.label,
+                                    icon = appIcons[appInfo.packageName] ?: appInfo.icon,
+                                    size = 44.dp
+                                )
                                 Column(modifier = Modifier.weight(1f)) {
                                     Row(
                                         verticalAlignment = Alignment.CenterVertically,

@@ -47,6 +47,7 @@ import com.ciphernodes.ciphervirtual.monitoring.StabilityLevel
 import com.ciphernodes.ciphervirtual.security.IntegrityStatusSnapshot
 import com.ciphernodes.ciphervirtual.security.IntegrityVerificationState
 import com.example.R
+import com.example.data.hardware.DeviceProfile
 import com.example.data.model.VirtualSpaceEntity
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -57,8 +58,10 @@ fun SecurityDashboard(
     integrityStatus: IntegrityStatusSnapshot,
     resourceTelemetry: ResourceTelemetrySnapshot,
     activeSpace: VirtualSpaceEntity?,
+    activeDeviceProfile: DeviceProfile?,
     hostDisplaySummary: String,
     networkSummary: String,
+    isTelemetryPaused: Boolean = false,
     onRunIntegrityCheck: () -> Unit,
     onTogglePeriodicIntegrity: (Boolean) -> Unit,
     onRefreshResources: () -> Unit,
@@ -193,6 +196,36 @@ fun SecurityDashboard(
                     )
                 }
 
+                integrityStatus.lastVerdict?.let { verdict ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        verdict.appRecognitionVerdict?.let { appVerdict ->
+                            TelemetryPill(
+                                label = "App: $appVerdict",
+                                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                contentColor = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                        verdict.deviceRecognitionVerdict?.let { deviceVerdict ->
+                            TelemetryPill(
+                                label = deviceVerdict,
+                                containerColor = if (verdict.verified) {
+                                    MaterialTheme.colorScheme.tertiaryContainer
+                                } else {
+                                    MaterialTheme.colorScheme.errorContainer
+                                },
+                                contentColor = if (verdict.verified) {
+                                    MaterialTheme.colorScheme.onTertiaryContainer
+                                } else {
+                                    MaterialTheme.colorScheme.onErrorContainer
+                                }
+                            )
+                        }
+                    }
+                }
+
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -268,7 +301,7 @@ fun SecurityDashboard(
                         Text("Container Resource Monitor", style = MaterialTheme.typography.titleMedium)
                     }
                     TelemetryPill(
-                        label = stabilityLabel,
+                        label = if (isTelemetryPaused) "PAUSED" else stabilityLabel,
                         icon = Icons.Rounded.Speed,
                         containerColor = stabilityContainer,
                         contentColor = stabilityContent
@@ -407,6 +440,20 @@ fun SecurityDashboard(
                     value = activeSpace?.let { "${it.name} • ${it.deviceModelPreset} (${it.virtualDpi} dpi)" }
                         ?: "No active space"
                 )
+                activeDeviceProfile?.let { profile ->
+                    DashboardMetricRow(
+                        label = "Profile Model",
+                        value = "${profile.manufacturer} ${profile.model}"
+                    )
+                    DashboardMetricRow(
+                        label = "Device / Board",
+                        value = "${profile.brand}/${profile.device} • ${profile.board} (${profile.hardware})"
+                    )
+                    DashboardMetricRow(
+                        label = "Profile OS & ID",
+                        value = "Android ${profile.androidVersion} (API ${profile.sdkInt}) • ${profile.profileId.take(8)}"
+                    )
+                }
             }
         }
     }

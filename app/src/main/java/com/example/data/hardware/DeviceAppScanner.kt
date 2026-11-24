@@ -1,8 +1,10 @@
 package com.example.data.hardware
 
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ApplicationInfo
+import android.content.pm.CrossProfileApps
 import android.content.pm.PackageManager
 import android.content.pm.ResolveInfo
 import android.graphics.Bitmap
@@ -18,9 +20,14 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 
+enum class LaunchTargetMode {
+    HOST_LAUNCHER,
+    WORK_PROFILE
+}
+
 class DeviceAppScanner(private val context: Context) {
 
-    private val iconCache = LruCache<String, ImageBitmap>(128)
+    private val iconCache = LruCache<String, ImageBitmap>(256)
 
     suspend fun scanInstalledLauncherApps(): List<InstalledAppInfo> = withContext(Dispatchers.IO) {
         val pm = context.packageManager
@@ -42,7 +49,7 @@ class DeviceAppScanner(private val context: Context) {
             if (pkg == context.packageName || !seenPackages.add(pkg)) return@mapNotNull null
 
             val appInfo = activityInfo.applicationInfo
-            val label = info.loadLabel(pm)?.toString()?.takeIf { it.isNotBlank() } ?: pkg
+            val label = info.loadLabel(pm).toString().takeIf { it.isNotBlank() } ?: pkg
             val versionName = runCatching {
                 val pkgInfo = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                     pm.getPackageInfo(pkg, PackageManager.PackageInfoFlags.of(0L))
@@ -68,16 +75,12 @@ class DeviceAppScanner(private val context: Context) {
                 if (sourceDir != null) File(sourceDir).length() / (1024f * 1024f) else 0f
             }.getOrDefault(0f)
 
-            val iconBitmap = iconCache.get(pkg) ?: runCatching {
-                drawableToImageBitmap(info.loadIcon(pm)).also { iconCache.put(pkg, it) }
-            }.getOrNull()
-
             InstalledAppInfo(
                 packageName = pkg,
                 label = label,
                 versionName = versionName,
                 isGame = isGame,
-                icon = iconBitmap,
+                icon = iconCache.get(pkg),
                 isSystemApp = isSystemApp,
                 targetSdk = appInfo.targetSdkVersion,
                 apkSizeMb = apkSizeMb
@@ -89,6 +92,15 @@ class DeviceAppScanner(private val context: Context) {
         )
     }
 
+    suspend fun loadAppIcons(packageNames: List<String>): Map<String, ImageBitmap> =
+        withContext(Dispatchers.IO) {
+            val result = mutableMapOf<String, ImageBitmap>()
+            packageNames.distinct().forEach { pkg ->
+                getAppIcon(pkg)?.let { result[pkg] = it }
+            }
+            result
+        }
+
     fun getAppIcon(packageName: String): ImageBitmap? {
         iconCache.get(packageName)?.let { return it }
         return runCatching {
@@ -97,15 +109,42 @@ class DeviceAppScanner(private val context: Context) {
         }.getOrNull()
     }
 
-    fun launchInstalledApp(packageName: String): Boolean {
-        val launchIntent = context.packageManager.getLaunchIntentForPackage(packageName) ?: return false
+    fun hasWorkProfileTarget(packageName: String): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return false
+        return runCatching {
+            val crossProfile = context.getSystemService(CrossProfileApps::class.java) ?: return false
+            crossProfile.targetUserProfiles.isNotEmpty() &&
+                context.packageManager.getLaunchIntentForPackage(packageName)?.component != null
+        }.getOrDefault(false)
+    }
+
+    fun launchInstalledApp(
+        packageName: String,
+        preferWorkProfile: Boolean = false
+    ): LaunchTargetMode? {
+        val launchIntent = context.packageManager.getLaunchIntentForPackage(packageName) ?: return null
+        if (preferWorkProfile && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            val component: ComponentName? = launchIntent.component
+            if (component != null) {
+                val crossProfile = context.getSystemService(CrossProfileApps::class.java)
+                val targetUser = crossProfile?.targetUserProfiles?.firstOrNull()
+                if (targetUser != null) {
+                    val launched = runCatching {
+                        crossProfile.startMainActivity(component, targetUser)
+                        true
+                    }.getOrDefault(false)
+                    if (launched) return LaunchTargetMode.WORK_PROFILE
+                }
+            }
+        }
         launchIntent.addFlags(
             Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED
         )
-        return runCatching {
-            context.startActivity(launchIntent)
-            true
-        }.getOrDefault(false)
+        return if (runCatching { context.startActivity(launchIntent) }.isSuccess) {
+            LaunchTargetMode.HOST_LAUNCHER
+        } else {
+            null
+        }
     }
 
     private fun drawableToImageBitmap(drawable: Drawable): ImageBitmap {

@@ -11,6 +11,11 @@ import com.ciphernodes.ciphervirtual.monitoring.ResourceTelemetrySnapshot
 import com.ciphernodes.ciphervirtual.security.IntegrityCheckService
 import com.ciphernodes.ciphervirtual.security.IntegrityManager
 import com.ciphernodes.ciphervirtual.security.IntegrityStatusSnapshot
+import com.example.R
+import com.example.data.hardware.DeviceProfile
+import com.example.data.hardware.DeviceProfileManager
+import com.example.data.hardware.LaunchTargetMode
+import com.example.data.local.InstanceWorkspaceStats
 import com.example.data.local.PreferencesStore
 import com.example.data.model.DeviceBridgeSnapshot
 import com.example.data.model.InstalledAppInfo
@@ -24,10 +29,12 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 data class OctoUiState(
@@ -44,7 +51,11 @@ data class OctoUiState(
     val darkThemeEnabled: Boolean = true,
     val statusMessage: String? = null,
     val integrityStatus: IntegrityStatusSnapshot = IntegrityStatusSnapshot(),
-    val resourceTelemetry: ResourceTelemetrySnapshot = ResourceTelemetrySnapshot()
+    val resourceTelemetry: ResourceTelemetrySnapshot = ResourceTelemetrySnapshot(),
+    val activeDeviceProfile: DeviceProfile? = null,
+    val availableDeviceProfiles: List<DeviceProfile> = DeviceProfileManager.availablePresets(),
+    val inspectedWorkspaceStats: InstanceWorkspaceStats? = null,
+    val isTelemetryPausedInBackground: Boolean = false
 ) {
     val activeSpace: VirtualSpaceEntity?
         get() = spaces.firstOrNull { it.id == selectedSpaceId } ?: spaces.firstOrNull()
@@ -55,32 +66,35 @@ class OctoViewModel(
     private val repository: OctoRepository,
     private val integrityManager: IntegrityManager,
     private val resourceSampler: ResourceMonitorSampler,
-    private val preferencesStore: PreferencesStore? = null
+    private val preferencesStore: PreferencesStore? = null,
+    private val deviceProfileManager: DeviceProfileManager? = null,
+    private val stringLookup: ((Int, Array<out Any>) -> String)? = null
 ) : ViewModel() {
 
-    private val selectedSpaceIdFlow = MutableStateFlow(preferencesStore?.getSelectedSpaceId())
+    private val selectedSpaceIdFlow = MutableStateFlow<Long?>(null)
     private val installedAppsFlow = MutableStateFlow<List<InstalledAppInfo>>(emptyList())
     private val isScanningAppsFlow = MutableStateFlow(false)
     private val appIconsFlow = MutableStateFlow<Map<String, ImageBitmap>>(emptyMap())
     private val deviceBridgeFlow = MutableStateFlow(DeviceBridgeSnapshot())
-    private val attachedVaultUrisFlow = MutableStateFlow(preferencesStore?.getAttachedVaultUris().orEmpty())
+    private val attachedVaultUrisFlow = MutableStateFlow<List<Uri>>(emptyList())
     private val launchSessionAppFlow = MutableStateFlow<VirtualAppEntity?>(null)
-    private val darkThemeFlow = MutableStateFlow(preferencesStore?.isDarkThemeEnabled() ?: true)
+    private val darkThemeFlow = MutableStateFlow(true)
     private val statusMessageFlow = MutableStateFlow<String?>(null)
-    private val periodicIntegrityEnabledFlow = MutableStateFlow(
-        preferencesStore?.isPeriodicIntegrityEnabled() ?: true
-    )
-    private val integrityStatusFlow = MutableStateFlow(
-        integrityManager.status.value.copy(
-            isPeriodicEnabled = preferencesStore?.isPeriodicIntegrityEnabled() ?: true
-        )
-    )
+    private val periodicIntegrityEnabledFlow = MutableStateFlow(true)
+    private val integrityStatusFlow = MutableStateFlow(integrityManager.status.value)
     private val resourceTelemetryFlow = MutableStateFlow(ResourceTelemetrySnapshot())
+    private val activeDeviceProfileFlow = MutableStateFlow(DeviceProfileManager.rogPhone8Pro())
+    private val availableDeviceProfilesFlow = MutableStateFlow(
+        deviceProfileManager?.getAvailableProfiles() ?: DeviceProfileManager.availablePresets()
+    )
+    private val inspectedWorkspaceStatsFlow = MutableStateFlow<InstanceWorkspaceStats?>(null)
+    private val isForegroundActiveFlow = MutableStateFlow(true)
 
     private var boundIntegrityService: IntegrityCheckService? = null
     private var boundResourceService: ResourceMonitorService? = null
     private var integrityCollectorJob: Job? = null
     private var resourceCollectorJob: Job? = null
+    private var fallbackTelemetryJob: Job? = null
 
     private val appsInSpaceFlow = combine(
         repository.spaces,
@@ -122,11 +136,15 @@ class OctoViewModel(
 
     private val bridgeDataFlow = combine(
         deviceBridgeFlow,
-        attachedVaultUrisFlow
-    ) { bridge, uris ->
+        attachedVaultUrisFlow,
+        inspectedWorkspaceStatsFlow,
+        isForegroundActiveFlow
+    ) { bridge, uris, stats, foreground ->
         BridgeData(
             deviceBridge = bridge,
-            attachedVaultUris = uris
+            attachedVaultUris = uris,
+            inspectedWorkspaceStats = stats,
+            isForegroundActive = foreground
         )
     }
 
@@ -150,8 +168,9 @@ class OctoViewModel(
         coreDataFlow,
         scannerDataFlow,
         bridgeDataFlow,
-        uiFlagsFlow
-    ) { core, scanner, bridge, flags ->
+        uiFlagsFlow,
+        combine(activeDeviceProfileFlow, availableDeviceProfilesFlow) { active, all -> active to all }
+    ) { core, scanner, bridge, flags, (activeProfile, allProfiles) ->
         OctoUiState(
             spaces = core.spaces,
             selectedSpaceId = core.selectedSpaceId,
@@ -166,7 +185,11 @@ class OctoViewModel(
             darkThemeEnabled = flags.darkThemeEnabled,
             statusMessage = flags.statusMessage,
             integrityStatus = flags.integrityStatus,
-            resourceTelemetry = flags.resourceTelemetry
+            resourceTelemetry = flags.resourceTelemetry,
+            activeDeviceProfile = activeProfile,
+            availableDeviceProfiles = allProfiles,
+            inspectedWorkspaceStats = bridge.inspectedWorkspaceStats,
+            isTelemetryPausedInBackground = !bridge.isForegroundActive
         )
     }.stateIn(
         scope = viewModelScope,
@@ -175,6 +198,30 @@ class OctoViewModel(
     )
 
     init {
+        preferencesStore?.let { store ->
+            viewModelScope.launch {
+                store.darkThemeFlow.distinctUntilChanged().collect { darkThemeFlow.value = it }
+            }
+            viewModelScope.launch {
+                store.selectedSpaceIdFlow.distinctUntilChanged().collect { savedId ->
+                    if (savedId != null && selectedSpaceIdFlow.value == null) {
+                        selectedSpaceIdFlow.value = savedId
+                        activeDeviceProfileFlow.value =
+                            deviceProfileManager?.getActiveProfile(savedId) ?: DeviceProfileManager.rogPhone8Pro()
+                    }
+                }
+            }
+            viewModelScope.launch {
+                store.periodicIntegrityFlow.distinctUntilChanged().collect { enabled ->
+                    periodicIntegrityEnabledFlow.value = enabled
+                    integrityStatusFlow.update { it.copy(isPeriodicEnabled = enabled) }
+                }
+            }
+            viewModelScope.launch {
+                store.attachedVaultUrisFlow.collect { attachedVaultUrisFlow.value = it }
+            }
+        }
+
         viewModelScope.launch {
             integrityManager.status.collect { snapshot ->
                 if (boundIntegrityService == null) {
@@ -184,16 +231,24 @@ class OctoViewModel(
                 }
             }
         }
+
         viewModelScope.launch {
             repository.ensureDefaultSpaces()
             refreshInstalledApps()
             refreshDeviceBridge()
             refreshResourceTelemetry()
         }
+
         viewModelScope.launch {
             combine(repository.spaces, repository.allVirtualApps) { spaces, apps ->
                 spaces to apps
             }.collect { (spaces, apps) ->
+                val active = selectedSpaceIdFlow.value?.let { id -> spaces.firstOrNull { it.id == id } }
+                    ?: spaces.firstOrNull()
+                if (active != null && deviceProfileManager != null) {
+                    activeDeviceProfileFlow.value =
+                        deviceProfileManager.resolveForPresetName(active.deviceModelPreset, active.id)
+                }
                 val boundRes = boundResourceService
                 if (boundRes != null) {
                     boundRes.updateTrackedContainers(spaces, apps)
@@ -202,25 +257,48 @@ class OctoViewModel(
                 }
             }
         }
-        viewModelScope.launch {
-            while (true) {
-                delay(3000L)
-                if (boundResourceService == null) {
-                    refreshResourceTelemetry()
-                }
-            }
-        }
+
         viewModelScope.launch {
             repository.allVirtualApps.collect { apps ->
                 val missing = apps.map { it.packageName }.distinct()
                     .filter { !appIconsFlow.value.containsKey(it) }
                 if (missing.isNotEmpty()) {
-                    val newIcons = missing.mapNotNull { pkg ->
-                        repository.getAppIcon(pkg)?.let { pkg to it }
-                    }.toMap()
+                    val newIcons = repository.loadAppIcons(missing)
                     if (newIcons.isNotEmpty()) {
                         appIconsFlow.update { it + newIcons }
                     }
+                }
+            }
+        }
+
+        restartFallbackPollingIfNeeded()
+    }
+
+    fun setForegroundActive(active: Boolean) {
+        isForegroundActiveFlow.value = active
+        val resourceService = boundResourceService
+        if (resourceService != null) {
+            if (active) {
+                resourceService.startMonitoring()
+            } else {
+                resourceService.stopMonitoring()
+            }
+        } else {
+            restartFallbackPollingIfNeeded()
+        }
+    }
+
+    private fun restartFallbackPollingIfNeeded() {
+        fallbackTelemetryJob?.cancel()
+        if (boundResourceService != null || !isForegroundActiveFlow.value) {
+            fallbackTelemetryJob = null
+            return
+        }
+        fallbackTelemetryJob = viewModelScope.launch {
+            while (isActive) {
+                delay(3000L)
+                if (boundResourceService == null && isForegroundActiveFlow.value) {
+                    refreshResourceTelemetry()
                 }
             }
         }
@@ -228,16 +306,30 @@ class OctoViewModel(
 
     fun selectSpace(spaceId: Long) {
         selectedSpaceIdFlow.value = spaceId
-        preferencesStore?.setSelectedSpaceId(spaceId)
+        viewModelScope.launch { preferencesStore?.setSelectedSpaceId(spaceId) }
+        val space = uiState.value.spaces.firstOrNull { it.id == spaceId }
+        if (space != null && deviceProfileManager != null) {
+            activeDeviceProfileFlow.value =
+                deviceProfileManager.resolveForPresetName(space.deviceModelPreset, space.id)
+        }
     }
 
     fun createSpace(name: String, tag: String, accentIndex: Int) {
         if (name.isBlank()) return
+        val trimmed = name.trim()
         viewModelScope.launch {
-            val newId = repository.createSpace(name, tag, accentIndex)
+            val newId = repository.createSpace(trimmed, tag, accentIndex)
+            val defaultPreset = DeviceProfileManager.rogPhone8Pro()
+            deviceProfileManager?.selectPreset(defaultPreset.presetKey, newId)?.let {
+                activeDeviceProfileFlow.value = it
+            }
             selectedSpaceIdFlow.value = newId
             preferencesStore?.setSelectedSpaceId(newId)
-            statusMessageFlow.value = "Space \"${name.trim()}\" initialized"
+            statusMessageFlow.value = formatText(
+                R.string.status_space_created,
+                "Space \"$trimmed\" initialized",
+                trimmed
+            )
         }
     }
 
@@ -253,7 +345,11 @@ class OctoViewModel(
                     accentIndex = accentIndex
                 )
             )
-            statusMessageFlow.value = "Updated space \"$trimmedName\""
+            statusMessageFlow.value = formatText(
+                R.string.status_space_updated,
+                "Updated space \"$trimmedName\"",
+                trimmedName
+            )
         }
     }
 
@@ -265,23 +361,90 @@ class OctoViewModel(
 
     fun resetSpaceDefaults(space: VirtualSpaceEntity) {
         viewModelScope.launch {
+            val defaultProfile = DeviceProfileManager.rogPhone8Pro()
+            deviceProfileManager?.selectPreset(defaultProfile.presetKey, space.id)?.let {
+                activeDeviceProfileFlow.value = it
+            }
             repository.updateSpace(
                 space.copy(
-                    deviceModelPreset = "ROG Phone 8 Pro",
-                    virtualDpi = 440,
+                    deviceModelPreset = defaultProfile.presetKey,
+                    virtualDpi = defaultProfile.densityDpi,
                     isolatedStorage = true,
                     frameRateHud = true,
                     permissionBridgeEnabled = true
                 )
             )
-            statusMessageFlow.value = "Restored default sandbox settings for ${space.name}"
+            statusMessageFlow.value = formatText(
+                R.string.status_defaults_restored,
+                "Restored default sandbox settings for ${space.name}",
+                space.name
+            )
+        }
+    }
+
+    fun selectDeviceProfile(space: VirtualSpaceEntity, profile: DeviceProfile) {
+        viewModelScope.launch {
+            val resolved = deviceProfileManager?.selectPreset(profile.presetKey, space.id) ?: profile
+            activeDeviceProfileFlow.value = resolved
+            repository.updateSpace(
+                space.copy(
+                    deviceModelPreset = resolved.presetKey,
+                    virtualDpi = resolved.densityDpi
+                )
+            )
+        }
+    }
+
+    fun saveCustomDeviceProfile(space: VirtualSpaceEntity, profile: DeviceProfile) {
+        viewModelScope.launch {
+            val saved = deviceProfileManager?.saveCustomProfile(profile, space.id) ?: profile
+            activeDeviceProfileFlow.value = saved
+            availableDeviceProfilesFlow.value =
+                deviceProfileManager?.getAvailableProfiles() ?: DeviceProfileManager.availablePresets()
+            repository.updateSpace(
+                space.copy(
+                    deviceModelPreset = saved.presetKey,
+                    virtualDpi = saved.densityDpi
+                )
+            )
+            statusMessageFlow.value = formatText(
+                R.string.status_custom_profile_saved,
+                "Saved custom profile \"${saved.displayName}\"",
+                saved.displayName
+            )
+        }
+    }
+
+    fun deleteCustomDeviceProfile(space: VirtualSpaceEntity?, profileId: String) {
+        viewModelScope.launch {
+            deviceProfileManager?.deleteCustomProfile(profileId, space?.id)
+            availableDeviceProfilesFlow.value =
+                deviceProfileManager?.getAvailableProfiles() ?: DeviceProfileManager.availablePresets()
+            val fallback = deviceProfileManager?.getActiveProfile(space?.id)
+                ?: DeviceProfileManager.rogPhone8Pro()
+            activeDeviceProfileFlow.value = fallback
+            if (space != null) {
+                repository.updateSpace(
+                    space.copy(
+                        deviceModelPreset = fallback.presetKey,
+                        virtualDpi = fallback.densityDpi
+                    )
+                )
+            }
+            statusMessageFlow.value = formatText(
+                R.string.status_custom_profile_removed,
+                "Removed custom hardware profile"
+            )
         }
     }
 
     fun deleteSpace(spaceId: Long) {
         viewModelScope.launch {
             if (uiState.value.spaces.size <= 1) {
-                statusMessageFlow.value = "At least one Virtual Space must remain active"
+                statusMessageFlow.value = formatText(
+                    R.string.status_space_min_one,
+                    "At least one Virtual Space must remain active"
+                )
                 return@launch
             }
             repository.deleteSpace(spaceId)
@@ -289,7 +452,10 @@ class OctoViewModel(
                 selectedSpaceIdFlow.value = null
                 preferencesStore?.setSelectedSpaceId(null)
             }
-            statusMessageFlow.value = "Virtual Space removed"
+            statusMessageFlow.value = formatText(
+                R.string.status_space_removed,
+                "Virtual Space removed"
+            )
         }
     }
 
@@ -298,11 +464,24 @@ class OctoViewModel(
             isScanningAppsFlow.value = true
             val apps = repository.scanDeviceApps()
             installedAppsFlow.value = apps
-            val icons = apps.mapNotNull { info -> info.icon?.let { info.packageName to it } }.toMap()
-            if (icons.isNotEmpty()) {
-                appIconsFlow.update { it + icons }
-            }
             isScanningAppsFlow.value = false
+        }
+    }
+
+    fun requestIconsForPackages(packageNames: List<String>) {
+        val missing = packageNames.distinct().filter { !appIconsFlow.value.containsKey(it) }
+        if (missing.isEmpty()) return
+        viewModelScope.launch {
+            val loaded = repository.loadAppIcons(missing)
+            if (loaded.isNotEmpty()) {
+                appIconsFlow.update { it + loaded }
+                installedAppsFlow.update { current ->
+                    current.map { info ->
+                        val icon = loaded[info.packageName]
+                        if (icon != null && info.icon == null) info.copy(icon = icon) else info
+                    }
+                }
+            }
         }
     }
 
@@ -310,21 +489,35 @@ class OctoViewModel(
         val active = uiState.value.activeSpace ?: return
         viewModelScope.launch {
             repository.addAppToSpace(active.id, installedApp)
-            statusMessageFlow.value = "Cloned ${installedApp.label} into ${active.name}"
+            statusMessageFlow.value = formatText(
+                R.string.status_app_cloned,
+                "Cloned ${installedApp.label} into ${active.name}",
+                installedApp.label,
+                active.name
+            )
         }
     }
 
     fun duplicateVirtualApp(app: VirtualAppEntity) {
         viewModelScope.launch {
             repository.duplicateVirtualApp(app)
-            statusMessageFlow.value = "Created new instance of ${app.displayName}"
+            statusMessageFlow.value = formatText(
+                R.string.status_app_duplicated,
+                "Created new instance of ${app.displayName}",
+                app.displayName
+            )
         }
     }
 
     fun removeVirtualApp(app: VirtualAppEntity) {
         viewModelScope.launch {
-            repository.removeVirtualApp(app.id)
-            statusMessageFlow.value = "Removed ${app.displayName} (${app.instanceLabel})"
+            repository.removeVirtualApp(app)
+            statusMessageFlow.value = formatText(
+                R.string.status_app_removed,
+                "Removed ${app.displayName} (${app.instanceLabel})",
+                app.displayName,
+                app.instanceLabel
+            )
         }
     }
 
@@ -345,16 +538,55 @@ class OctoViewModel(
         launchSessionAppFlow.value = null
     }
 
-    fun launchAppFromSession(app: VirtualAppEntity) {
+    fun hasWorkProfileTarget(packageName: String): Boolean =
+        repository.hasWorkProfileTarget(packageName)
+
+    fun launchAppFromSession(app: VirtualAppEntity, preferWorkProfile: Boolean = false) {
         viewModelScope.launch {
-            repository.recordLaunch(app.id)
-            val launched = repository.launchPackage(app.packageName)
+            val space = uiState.value.spaces.firstOrNull { it.id == app.spaceId } ?: uiState.value.activeSpace
+            val profile = uiState.value.activeDeviceProfile
+            repository.recordLaunch(app, space, profile)
+            val mode = repository.launchPackage(app.packageName, preferWorkProfile)
             launchSessionAppFlow.value = null
-            statusMessageFlow.value = if (launched) {
-                "Launched ${app.displayName} (${app.instanceLabel})"
-            } else {
-                "Package ${app.packageName} cannot be launched directly on this device"
+            if (inspectedWorkspaceStatsFlow.value != null && space != null) {
+                inspectedWorkspaceStatsFlow.value = repository.inspectInstanceWorkspace(space.id, app.id)
             }
+            statusMessageFlow.value = when (mode) {
+                LaunchTargetMode.WORK_PROFILE ->
+                    "Launched ${app.displayName} (${app.instanceLabel}) in Work Profile"
+                LaunchTargetMode.HOST_LAUNCHER ->
+                    formatText(
+                        R.string.status_app_launched,
+                        "Launched ${app.displayName} (${app.instanceLabel})",
+                        app.displayName,
+                        app.instanceLabel
+                    )
+                null ->
+                    formatText(
+                        R.string.status_app_launch_failed,
+                        "Package ${app.packageName} cannot be launched directly on this device",
+                        app.packageName
+                    )
+            }
+        }
+    }
+
+    fun inspectInstanceWorkspace(spaceId: Long, appId: Long) {
+        viewModelScope.launch {
+            inspectedWorkspaceStatsFlow.value = repository.inspectInstanceWorkspace(spaceId, appId)
+        }
+    }
+
+    fun resetInstanceWorkspace(app: VirtualAppEntity) {
+        viewModelScope.launch {
+            repository.resetInstanceWorkspace(app.spaceId, app.id)
+            inspectedWorkspaceStatsFlow.value = repository.inspectInstanceWorkspace(app.spaceId, app.id)
+            statusMessageFlow.value = formatText(
+                R.string.status_workspace_reset,
+                "Cleared local session data for ${app.displayName} (${app.instanceLabel})",
+                app.displayName,
+                app.instanceLabel
+            )
         }
     }
 
@@ -371,7 +603,12 @@ class OctoViewModel(
         val granted = results.values.count { it }
         val total = results.size
         if (total > 0) {
-            statusMessageFlow.value = "$granted of $total requested permissions granted"
+            statusMessageFlow.value = formatText(
+                R.string.status_permissions_granted,
+                "$granted of $total requested permissions granted",
+                granted,
+                total
+            )
         }
     }
 
@@ -379,34 +616,43 @@ class OctoViewModel(
         if (uri != null) {
             attachedVaultUrisFlow.update { current ->
                 val updated = if (current.contains(uri)) current else (listOf(uri) + current).take(20)
-                preferencesStore?.setAttachedVaultUris(updated)
+                viewModelScope.launch { preferencesStore?.setAttachedVaultUris(updated) }
                 updated
             }
-            statusMessageFlow.value = "Imported media/document into Virtual Vault"
+            statusMessageFlow.value = formatText(
+                R.string.status_vault_imported,
+                "Imported media/document into Virtual Vault"
+            )
         }
     }
 
     fun removeVaultUri(uri: Uri) {
         attachedVaultUrisFlow.update { current ->
             val updated = current.filterNot { it == uri }
-            preferencesStore?.setAttachedVaultUris(updated)
+            viewModelScope.launch { preferencesStore?.setAttachedVaultUris(updated) }
             updated
         }
-        statusMessageFlow.value = "Removed attachment from Virtual Vault"
+        statusMessageFlow.value = formatText(
+            R.string.status_vault_removed,
+            "Removed attachment from Virtual Vault"
+        )
     }
 
     fun onStorageTreePicked(uri: Uri?) {
         if (uri != null) {
             repository.persistStorageTreeUri(uri)
             refreshDeviceBridge()
-            statusMessageFlow.value = "Storage folder access granted to Cipher Virtual"
+            statusMessageFlow.value = formatText(
+                R.string.status_storage_granted,
+                "Storage folder access granted to Cipher Virtual"
+            )
         }
     }
 
     fun toggleTheme() {
         darkThemeFlow.update { current ->
             val next = !current
-            preferencesStore?.setDarkThemeEnabled(next)
+            viewModelScope.launch { preferencesStore?.setDarkThemeEnabled(next) }
             next
         }
     }
@@ -435,9 +681,15 @@ class OctoViewModel(
         resourceCollectorJob?.cancel()
         boundResourceService = service
         if (service != null) {
+            fallbackTelemetryJob?.cancel()
+            fallbackTelemetryJob = null
             val state = uiState.value
             service.updateTrackedContainers(state.spaces, state.allVirtualApps)
-            service.startMonitoring()
+            if (isForegroundActiveFlow.value) {
+                service.startMonitoring()
+            } else {
+                service.stopMonitoring()
+            }
             resourceCollectorJob = viewModelScope.launch {
                 service.telemetry.collect { snapshot ->
                     resourceTelemetryFlow.value = snapshot
@@ -445,6 +697,7 @@ class OctoViewModel(
             }
         } else {
             resourceCollectorJob = null
+            restartFallbackPollingIfNeeded()
         }
     }
 
@@ -462,7 +715,7 @@ class OctoViewModel(
 
     fun setPeriodicIntegrityEnabled(enabled: Boolean) {
         periodicIntegrityEnabledFlow.value = enabled
-        preferencesStore?.setPeriodicIntegrityEnabled(enabled)
+        viewModelScope.launch { preferencesStore?.setPeriodicIntegrityEnabled(enabled) }
         val service = boundIntegrityService
         if (service != null) {
             if (enabled) service.startPeriodicVerification() else service.stopPeriodicVerification()
@@ -488,6 +741,10 @@ class OctoViewModel(
         statusMessageFlow.value = null
     }
 
+    private fun formatText(resId: Int, fallback: String, vararg args: Any): String {
+        return stringLookup?.invoke(resId, args) ?: fallback
+    }
+
     private data class CoreData(
         val spaces: List<VirtualSpaceEntity>,
         val selectedSpaceId: Long?,
@@ -503,7 +760,9 @@ class OctoViewModel(
 
     private data class BridgeData(
         val deviceBridge: DeviceBridgeSnapshot,
-        val attachedVaultUris: List<Uri>
+        val attachedVaultUris: List<Uri>,
+        val inspectedWorkspaceStats: InstanceWorkspaceStats?,
+        val isForegroundActive: Boolean
     )
 
     private data class UiFlagsData(
@@ -519,12 +778,21 @@ class OctoViewModelFactory(
     private val repository: OctoRepository,
     private val integrityManager: IntegrityManager,
     private val resourceSampler: ResourceMonitorSampler,
-    private val preferencesStore: PreferencesStore
+    private val preferencesStore: PreferencesStore,
+    private val deviceProfileManager: DeviceProfileManager,
+    private val stringLookup: (Int, Array<out Any>) -> String
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         if (modelClass.isAssignableFrom(OctoViewModel::class.java)) {
-            return OctoViewModel(repository, integrityManager, resourceSampler, preferencesStore) as T
+            return OctoViewModel(
+                repository = repository,
+                integrityManager = integrityManager,
+                resourceSampler = resourceSampler,
+                preferencesStore = preferencesStore,
+                deviceProfileManager = deviceProfileManager,
+                stringLookup = stringLookup
+            ) as T
         }
         throw IllegalArgumentException("Unknown ViewModel class: ${modelClass.name}")
     }

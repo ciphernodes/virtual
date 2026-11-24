@@ -1,5 +1,6 @@
 package com.example.ui.navigation
 
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
@@ -16,6 +17,7 @@ import androidx.compose.material.icons.outlined.VerifiedUser
 import androidx.compose.material.icons.rounded.Layers
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.VerifiedUser
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
@@ -31,6 +33,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
@@ -42,33 +45,58 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
 import com.example.R
 import com.example.ui.OctoViewModel
 import com.example.ui.components.VirtualLaunchSessionDialog
+import com.example.ui.screens.AppDetailScreen
 import com.example.ui.screens.PermissionGateScreen
 import com.example.ui.screens.PermissionsScreen
 import com.example.ui.screens.SandboxConfigScreen
 import com.example.ui.screens.SpacesScreen
 
-const val ROUTE_SPACES = "spaces"
-const val ROUTE_PERMISSIONS = "permissions"
-const val ROUTE_SANDBOX = "sandbox"
+sealed interface OctoRoute {
+    val routePattern: String
+
+    data object Spaces : OctoRoute {
+        override val routePattern: String = "spaces"
+    }
+
+    data object Permissions : OctoRoute {
+        override val routePattern: String = "permissions"
+    }
+
+    data object Sandbox : OctoRoute {
+        override val routePattern: String = "sandbox"
+    }
+
+    data class AppDetail(val appId: Long) : OctoRoute {
+        override val routePattern: String = routeFor(appId)
+
+        companion object {
+            const val ARG_APP_ID = "appId"
+            const val PATTERN = "app_detail/{$ARG_APP_ID}"
+            fun routeFor(appId: Long): String = "app_detail/$appId"
+        }
+    }
+}
 
 private data class OctoNavItem(
-    val route: String,
+    val route: OctoRoute,
     val labelRes: Int,
     val selectedIcon: ImageVector,
     val unselectedIcon: ImageVector
 )
 
 private val NAV_ITEMS = listOf(
-    OctoNavItem(ROUTE_SPACES, R.string.nav_spaces, Icons.Rounded.Layers, Icons.Outlined.Layers),
-    OctoNavItem(ROUTE_PERMISSIONS, R.string.nav_permissions, Icons.Rounded.VerifiedUser, Icons.Outlined.VerifiedUser),
-    OctoNavItem(ROUTE_SANDBOX, R.string.nav_sandbox, Icons.Rounded.Tune, Icons.Outlined.Tune)
+    OctoNavItem(OctoRoute.Spaces, R.string.nav_spaces, Icons.Rounded.Layers, Icons.Outlined.Layers),
+    OctoNavItem(OctoRoute.Permissions, R.string.nav_permissions, Icons.Rounded.VerifiedUser, Icons.Outlined.VerifiedUser),
+    OctoNavItem(OctoRoute.Sandbox, R.string.nav_sandbox, Icons.Rounded.Tune, Icons.Outlined.Tune)
 )
 
 @Composable
@@ -87,15 +115,16 @@ fun OctoApp(viewModel: OctoViewModel) {
     }
 
     if (!uiState.deviceBridge.initialized) {
-        androidx.compose.foundation.layout.Box(
+        Box(
             modifier = Modifier.fillMaxSize(),
-            contentAlignment = androidx.compose.ui.Alignment.Center
+            contentAlignment = Alignment.Center
         ) {
-            androidx.compose.material3.CircularProgressIndicator()
+            CircularProgressIndicator()
         }
         return
     }
 
+    // Startup permission gate (#1 preserved as requested)
     if (!uiState.deviceBridge.allRequiredGranted) {
         PermissionGateScreen(
             uiState = uiState,
@@ -119,8 +148,8 @@ fun OctoApp(viewModel: OctoViewModel) {
         }
     }
 
-    fun navigateToTab(route: String) {
-        navController.navigate(route) {
+    fun navigateToTab(route: OctoRoute) {
+        navController.navigate(route.routePattern) {
             popUpTo(navController.graph.findStartDestination().id) {
                 saveState = true
             }
@@ -143,7 +172,9 @@ fun OctoApp(viewModel: OctoViewModel) {
                         windowInsets = WindowInsets.navigationBars
                     ) {
                         NAV_ITEMS.forEach { item ->
-                            val selected = currentDestination?.hierarchy?.any { it.route == item.route } == true
+                            val selected = currentDestination?.hierarchy?.any {
+                                it.route == item.route.routePattern
+                            } == true
                             NavigationBarItem(
                                 selected = selected,
                                 onClick = { navigateToTab(item.route) },
@@ -154,7 +185,7 @@ fun OctoApp(viewModel: OctoViewModel) {
                                     )
                                 },
                                 label = { Text(stringResource(item.labelRes)) },
-                                modifier = Modifier.testTag("nav_${item.route}")
+                                modifier = Modifier.testTag("nav_${item.route.routePattern}")
                             )
                         }
                     }
@@ -174,7 +205,9 @@ fun OctoApp(viewModel: OctoViewModel) {
                             .windowInsetsPadding(WindowInsets.navigationBars)
                     ) {
                         NAV_ITEMS.forEach { item ->
-                            val selected = currentDestination?.hierarchy?.any { it.route == item.route } == true
+                            val selected = currentDestination?.hierarchy?.any {
+                                it.route == item.route.routePattern
+                            } == true
                             NavigationRailItem(
                                 selected = selected,
                                 onClick = { navigateToTab(item.route) },
@@ -185,7 +218,7 @@ fun OctoApp(viewModel: OctoViewModel) {
                                     )
                                 },
                                 label = { Text(stringResource(item.labelRes)) },
-                                modifier = Modifier.testTag("nav_rail_${item.route}")
+                                modifier = Modifier.testTag("nav_rail_${item.route.routePattern}")
                             )
                         }
                     }
@@ -193,10 +226,10 @@ fun OctoApp(viewModel: OctoViewModel) {
 
                 NavHost(
                     navController = navController,
-                    startDestination = ROUTE_SPACES,
+                    startDestination = OctoRoute.Spaces.routePattern,
                     modifier = Modifier.weight(1f)
                 ) {
-                    composable(ROUTE_SPACES) {
+                    composable(OctoRoute.Spaces.routePattern) {
                         SpacesScreen(
                             uiState = uiState,
                             onSelectSpace = viewModel::selectSpace,
@@ -206,13 +239,17 @@ fun OctoApp(viewModel: OctoViewModel) {
                             onAddApp = viewModel::addAppToActiveSpace,
                             onDuplicateApp = viewModel::duplicateVirtualApp,
                             onRefreshInstalledApps = viewModel::refreshInstalledApps,
+                            onRequestIcons = viewModel::requestIconsForPackages,
                             onOpenLaunchSession = viewModel::openLaunchSession,
-                            onOpenPermissionsTab = { navigateToTab(ROUTE_PERMISSIONS) },
-                            onOpenSandboxConfig = { navigateToTab(ROUTE_SANDBOX) },
+                            onInspectApp = { app ->
+                                navController.navigate(OctoRoute.AppDetail.routeFor(app.id))
+                            },
+                            onOpenPermissionsTab = { navigateToTab(OctoRoute.Permissions) },
+                            onOpenSandboxConfig = { navigateToTab(OctoRoute.Sandbox) },
                             onRemoveVirtualApp = viewModel::removeVirtualApp
                         )
                     }
-                    composable(ROUTE_PERMISSIONS) {
+                    composable(OctoRoute.Permissions.routePattern) {
                         PermissionsScreen(
                             uiState = uiState,
                             missingPermissions = viewModel::getMissingRuntimePermissions,
@@ -223,15 +260,36 @@ fun OctoApp(viewModel: OctoViewModel) {
                             onStorageTreePicked = viewModel::onStorageTreePicked
                         )
                     }
-                    composable(ROUTE_SANDBOX) {
+                    composable(OctoRoute.Sandbox.routePattern) {
                         SandboxConfigScreen(
                             uiState = uiState,
                             onUpdateSpace = viewModel::updateSpace,
+                            onSelectDeviceProfile = viewModel::selectDeviceProfile,
+                            onSaveCustomProfile = viewModel::saveCustomDeviceProfile,
+                            onDeleteCustomProfile = viewModel::deleteCustomDeviceProfile,
                             onResetSpaceDefaults = viewModel::resetSpaceDefaults,
                             onToggleTheme = viewModel::toggleTheme,
                             onRunIntegrityCheck = viewModel::runIntegrityCheckNow,
                             onTogglePeriodicIntegrity = viewModel::setPeriodicIntegrityEnabled,
                             onRefreshResources = viewModel::refreshResourceTelemetry
+                        )
+                    }
+                    composable(
+                        route = OctoRoute.AppDetail.PATTERN,
+                        arguments = listOf(navArgument(OctoRoute.AppDetail.ARG_APP_ID) { type = NavType.LongType })
+                    ) { entry ->
+                        val appId = entry.arguments?.getLong(OctoRoute.AppDetail.ARG_APP_ID) ?: -1L
+                        AppDetailScreen(
+                            appId = appId,
+                            uiState = uiState,
+                            hasWorkProfileTarget = viewModel::hasWorkProfileTarget,
+                            onInspectWorkspace = viewModel::inspectInstanceWorkspace,
+                            onUpdateApp = viewModel::updateVirtualApp,
+                            onCloneApp = viewModel::duplicateVirtualApp,
+                            onRemoveApp = viewModel::removeVirtualApp,
+                            onResetWorkspace = viewModel::resetInstanceWorkspace,
+                            onLaunchApp = viewModel::launchAppFromSession,
+                            onBack = { navController.popBackStack() }
                         )
                     }
                 }
@@ -244,10 +302,12 @@ fun OctoApp(viewModel: OctoViewModel) {
         VirtualLaunchSessionDialog(
             app = launchApp,
             space = space,
+            activeDeviceProfile = uiState.activeDeviceProfile,
             appIcon = uiState.appIcons[launchApp.packageName],
             hostDisplaySummary = uiState.deviceBridge.hostDisplaySummary,
             grantedPermissionsCount = uiState.deviceBridge.grantedCount,
             totalPermissionsCount = uiState.deviceBridge.totalCount,
+            hasWorkProfile = viewModel.hasWorkProfileTarget(launchApp.packageName),
             onChangePerformanceMode = { mode ->
                 viewModel.updateVirtualApp(launchApp.copy(performanceMode = mode))
             },
@@ -258,12 +318,16 @@ fun OctoApp(viewModel: OctoViewModel) {
                 viewModel.duplicateVirtualApp(launchApp)
                 viewModel.dismissLaunchSession()
             },
+            onInspectDetails = {
+                viewModel.dismissLaunchSession()
+                navController.navigate(OctoRoute.AppDetail.routeFor(launchApp.id))
+            },
             onOpenPermissions = {
                 viewModel.dismissLaunchSession()
-                navigateToTab(ROUTE_PERMISSIONS)
+                navigateToTab(OctoRoute.Permissions)
             },
-            onLaunchNow = {
-                viewModel.launchAppFromSession(launchApp)
+            onLaunchNow = { preferWork ->
+                viewModel.launchAppFromSession(launchApp, preferWorkProfile = preferWork)
             },
             onDismiss = viewModel::dismissLaunchSession
         )

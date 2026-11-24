@@ -232,9 +232,12 @@ class IntegrityManager(
             requestMethod = "POST"
             connectTimeout = 10_000
             readTimeout = 10_000
+            useCaches = false
             doOutput = true
             setRequestProperty("Content-Type", "application/json; charset=utf-8")
             setRequestProperty("Accept", "application/json")
+            setRequestProperty("X-Request-Hash", requestHash)
+            setRequestProperty("X-App-Package", appContext.packageName)
         }
 
         try {
@@ -251,9 +254,12 @@ class IntegrityManager(
             val stream = if (statusCode in 200..299) connection.inputStream else connection.errorStream
             val body = stream?.bufferedReader(Charsets.UTF_8)?.use(BufferedReader::readText).orEmpty()
             if (statusCode !in 200..299) {
+                val serverError = runCatching {
+                    JSONObject(body).optString("error").takeIf { it.isNotBlank() }
+                }.getOrNull()
                 return@withContext IntegrityVerdictResult(
                     verified = false,
-                    detail = "Server verification HTTP $statusCode"
+                    detail = serverError ?: "Server verification HTTP $statusCode"
                 )
             }
 

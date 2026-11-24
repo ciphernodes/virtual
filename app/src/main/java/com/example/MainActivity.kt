@@ -21,8 +21,10 @@ import com.ciphernodes.ciphervirtual.security.IntegrityCheckService
 import com.ciphernodes.ciphervirtual.security.IntegrityManager
 import com.example.data.hardware.DeviceAppScanner
 import com.example.data.hardware.DeviceBridgeManager
+import com.example.data.hardware.DeviceProfileManager
 import com.example.data.local.OctoDatabase
 import com.example.data.local.PreferencesStore
+import com.example.data.local.WorkspaceStorageManager
 import com.example.data.repository.OctoRepository
 import com.example.ui.OctoViewModel
 import com.example.ui.OctoViewModelFactory
@@ -35,14 +37,21 @@ class MainActivity : ComponentActivity() {
         val db = OctoDatabase.getInstance(applicationContext)
         val scanner = DeviceAppScanner(applicationContext)
         val bridgeManager = DeviceBridgeManager(applicationContext)
+        val workspaceStorage = WorkspaceStorageManager(applicationContext.filesDir)
         val integrityManager = IntegrityManager(applicationContext)
         val resourceSampler = ResourceMonitorSampler(applicationContext)
         val preferencesStore = PreferencesStore(applicationContext)
+        val deviceProfileManager = DeviceProfileManager(applicationContext)
         OctoViewModelFactory(
-            repository = OctoRepository(db.octoDao(), scanner, bridgeManager),
+            repository = OctoRepository(db.octoDao(), scanner, bridgeManager, workspaceStorage),
             integrityManager = integrityManager,
             resourceSampler = resourceSampler,
-            preferencesStore = preferencesStore
+            preferencesStore = preferencesStore,
+            deviceProfileManager = deviceProfileManager,
+            stringLookup = { resId, args ->
+                if (args.isEmpty()) applicationContext.getString(resId)
+                else applicationContext.getString(resId, *args)
+            }
         )
     }
 
@@ -99,6 +108,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
+        viewModel.setForegroundActive(true)
         integrityBound = bindService(
             Intent(this, IntegrityCheckService::class.java),
             integrityConnection,
@@ -118,6 +128,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onStop() {
         super.onStop()
+        viewModel.setForegroundActive(false)
         viewModel.attachIntegrityService(null)
         viewModel.attachResourceService(null)
         if (integrityBound) {

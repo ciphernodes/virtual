@@ -41,8 +41,8 @@ interface OctoDao {
     @Update
     suspend fun updateApp(app: VirtualAppEntity)
 
-    @Query("UPDATE virtual_apps SET launchCount = launchCount + 1, lastLaunchedAt = :timestamp WHERE id = :appId")
-    suspend fun recordAppLaunch(appId: Long, timestamp: Long)
+    @Query("UPDATE virtual_apps SET launchCount = launchCount + 1, lastLaunchedAt = :timestamp, lastProfileId = :profileId WHERE id = :appId")
+    suspend fun recordAppLaunch(appId: Long, timestamp: Long, profileId: String?)
 
     @Query("DELETE FROM virtual_apps WHERE id = :appId")
     suspend fun deleteApp(appId: Long)

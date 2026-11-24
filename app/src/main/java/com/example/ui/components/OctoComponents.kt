@@ -13,15 +13,20 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.material.icons.rounded.ContentCopy
+import androidx.compose.material.icons.rounded.DeveloperBoard
+import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Layers
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Security
 import androidx.compose.material.icons.rounded.VerifiedUser
+import androidx.compose.material.icons.rounded.Work
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -32,6 +37,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -55,6 +61,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.example.R
+import com.example.data.hardware.DeviceProfile
 import com.example.data.model.VirtualAppEntity
 import com.example.data.model.VirtualSpaceEntity
 import com.example.ui.theme.spaceAccentColors
@@ -147,21 +154,25 @@ fun TelemetryPill(
 fun VirtualLaunchSessionDialog(
     app: VirtualAppEntity,
     space: VirtualSpaceEntity?,
+    activeDeviceProfile: DeviceProfile?,
     appIcon: ImageBitmap?,
     hostDisplaySummary: String,
     grantedPermissionsCount: Int,
     totalPermissionsCount: Int,
+    hasWorkProfile: Boolean,
     onChangePerformanceMode: (String) -> Unit,
     onRenameInstance: (String) -> Unit,
     onCloneInstance: () -> Unit,
+    onInspectDetails: () -> Unit,
     onOpenPermissions: () -> Unit,
-    onLaunchNow: () -> Unit,
+    onLaunchNow: (preferWorkProfile: Boolean) -> Unit,
     onDismiss: () -> Unit
 ) {
     val perfModes = listOf("Balanced", "Turbo", "Battery")
     val haptics = LocalHapticFeedback.current
     val spaceAccent = spaceAccentColors(space?.accentIndex ?: 0)
     var labelDraft by remember(app.id, app.instanceLabel) { mutableStateOf(app.instanceLabel) }
+    var preferWorkProfile by remember(app.id, hasWorkProfile) { mutableStateOf(false) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -193,7 +204,10 @@ fun VirtualLaunchSessionDialog(
             }
         },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
                 Surface(
                     shape = MaterialTheme.shapes.medium,
                     color = MaterialTheme.colorScheme.surfaceVariant,
@@ -214,10 +228,22 @@ fun VirtualLaunchSessionDialog(
                             label = "Space Profile",
                             value = space?.deviceModelPreset ?: "Native Hardware"
                         )
+                        activeDeviceProfile?.let { profile ->
+                            SessionDetailRow(
+                                icon = Icons.Rounded.DeveloperBoard,
+                                label = "Device Spec",
+                                value = "${profile.manufacturer} ${profile.model} (API ${profile.sdkInt})"
+                            )
+                            SessionDetailRow(
+                                icon = Icons.Rounded.Info,
+                                label = "Profile ID",
+                                value = profile.profileId.take(8)
+                            )
+                        }
                         SessionDetailRow(
                             icon = Icons.Rounded.Layers,
                             label = "Virtual DPI",
-                            value = "${space?.virtualDpi ?: 440} dpi • ${if (space?.isolatedStorage == true) "Isolated" else "Shared"}"
+                            value = "${space?.virtualDpi ?: 440} dpi • ${if (space?.isolatedStorage == true) "Workspace Saved" else "Shared"}"
                         )
                         SessionDetailRow(
                             icon = Icons.Rounded.Layers,
@@ -232,6 +258,37 @@ fun VirtualLaunchSessionDialog(
                             } else {
                                 "Sandboxed (Bridge Off)"
                             }
+                        )
+                        SessionDetailRow(
+                            icon = Icons.Rounded.Work,
+                            label = "Launch Target",
+                            value = if (hasWorkProfile) {
+                                stringResource(R.string.session_launch_mode_work_profile)
+                            } else {
+                                stringResource(R.string.session_launch_mode_host)
+                            }
+                        )
+                    }
+                }
+
+                if (hasWorkProfile) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Launch in Work Profile", style = MaterialTheme.typography.titleSmall)
+                            Text(
+                                "Uses Android CrossProfileApps when managed profile is present",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = preferWorkProfile,
+                            onCheckedChange = { preferWorkProfile = it },
+                            modifier = Modifier.testTag("session_work_profile_switch")
                         )
                     }
                 }
@@ -289,27 +346,41 @@ fun VirtualLaunchSessionDialog(
                     }
                 }
 
-                FilledTonalButton(
-                    onClick = {
-                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                        onCloneInstance()
-                    },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(48.dp)
-                        .testTag("session_clone_instance_button")
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Icon(Icons.Rounded.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text("Clone Another Instance")
+                    FilledTonalButton(
+                        onClick = {
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                            onCloneInstance()
+                        },
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(48.dp)
+                            .testTag("session_clone_instance_button")
+                    ) {
+                        Icon(Icons.Rounded.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Clone")
+                    }
+                    FilledTonalButton(
+                        onClick = onInspectDetails,
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(48.dp)
+                            .testTag("session_inspect_button")
+                    ) {
+                        Icon(Icons.Rounded.Info, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text(stringResource(R.string.inspect_instance))
+                    }
                 }
 
                 Text(
-                    text = "${app.packageName} • ${app.launchCount} launches",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                    text = stringResource(R.string.session_launch_disclaimer),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         },
@@ -333,7 +404,7 @@ fun VirtualLaunchSessionDialog(
             Button(
                 onClick = {
                     haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                    onLaunchNow()
+                    onLaunchNow(preferWorkProfile)
                 },
                 colors = ButtonDefaults.buttonColors(
                     containerColor = spaceAccent.accent,

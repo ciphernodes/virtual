@@ -20,8 +20,17 @@ android {
     versionName = "1.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-    buildConfigField("long", "PLAY_INTEGRITY_CLOUD_PROJECT_NUMBER", "0L")
-    buildConfigField("String", "PLAY_INTEGRITY_VERIFICATION_URL", "\"\"")
+    val integrityProjectNumber = (
+      providers.gradleProperty("PLAY_INTEGRITY_CLOUD_PROJECT_NUMBER").orNull
+        ?: System.getenv("PLAY_INTEGRITY_CLOUD_PROJECT_NUMBER")
+      )?.toLongOrNull() ?: 0L
+    val integrityVerificationUrl = (
+      providers.gradleProperty("PLAY_INTEGRITY_VERIFICATION_URL").orNull
+        ?: System.getenv("PLAY_INTEGRITY_VERIFICATION_URL")
+        ?: ""
+      ).replace("\"", "\\\"")
+    buildConfigField("long", "PLAY_INTEGRITY_CLOUD_PROJECT_NUMBER", "${integrityProjectNumber}L")
+    buildConfigField("String", "PLAY_INTEGRITY_VERIFICATION_URL", "\"$integrityVerificationUrl\"")
   }
 
   // Do not remove or modify these signingConfigs. They are necessary for building, installing,
@@ -73,6 +82,10 @@ android {
   }
 }
 
+ksp {
+  arg("room.schemaLocation", "$projectDir/schemas")
+}
+
 // Configure the Secrets Gradle Plugin to use .env and .env.example files
 // to match the convention used in Web projects.
 secrets {
@@ -101,7 +114,7 @@ dependencies {
   implementation(libs.androidx.compose.ui.graphics)
   implementation(libs.androidx.compose.ui.tooling.preview)
   implementation(libs.androidx.core.ktx)
-  // implementation(libs.androidx.datastore.preferences)
+  implementation(libs.androidx.datastore.preferences)
   implementation(libs.androidx.lifecycle.runtime.compose)
   implementation(libs.androidx.lifecycle.runtime.ktx)
   implementation(libs.androidx.lifecycle.viewmodel.compose)

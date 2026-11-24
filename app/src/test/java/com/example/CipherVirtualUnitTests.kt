@@ -6,16 +6,23 @@ import com.ciphernodes.ciphervirtual.monitoring.StabilityLevel
 import com.ciphernodes.ciphervirtual.security.IntegrityStatusSnapshot
 import com.ciphernodes.ciphervirtual.security.IntegrityVerdictResult
 import com.ciphernodes.ciphervirtual.security.IntegrityVerificationState
+import com.example.data.hardware.DeviceProfile
+import com.example.data.hardware.DeviceProfileManager
+import com.example.data.local.WorkspaceStorageManager
 import com.example.data.model.DeviceBridgeSnapshot
 import com.example.data.model.InstalledAppInfo
 import com.example.data.model.VirtualAppEntity
 import com.example.data.model.VirtualSpaceEntity
 import com.example.ui.OctoUiState
+import com.example.ui.navigation.OctoRoute
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.nio.file.Files
 
 class CipherVirtualUnitTests {
 
@@ -126,6 +133,8 @@ class CipherVirtualUnitTests {
         assertEquals("Balanced", app.performanceMode)
         assertEquals(0, app.launchCount)
         assertNull(app.lastLaunchedAt)
+        assertEquals("", app.notes)
+        assertNull(app.lastProfileId)
 
         val installed = InstalledAppInfo(
             packageName = "com.example.demo",
@@ -165,5 +174,90 @@ class CipherVirtualUnitTests {
         )
         assertEquals(IntegrityVerificationState.VERIFIED, verifiedSnapshot.state)
         assertTrue(verifiedSnapshot.lastVerdict?.verified == true)
+    }
+
+    @Test
+    fun deviceProfile_presetsAndBuilderAndJsonRoundTripWork() {
+        val pixel8 = DeviceProfileManager.pixel8()
+        assertEquals("Pixel 8", pixel8.model)
+        assertEquals("Google", pixel8.manufacturer)
+        assertEquals(34, pixel8.sdkInt)
+        assertFalse(pixel8.isCustom)
+
+        val galaxyS24 = DeviceProfileManager.galaxyS24()
+        assertEquals("SM-S921B", galaxyS24.model)
+        assertEquals("samsung", galaxyS24.manufacturer)
+
+        val custom = DeviceProfileManager.CustomProfileBuilder(pixel8)
+            .profileId("custom-rig-01")
+            .displayName("Lab Rig")
+            .model("Lab-X1")
+            .manufacturer("CipherLabs")
+            .brand("cipher")
+            .device("rig01")
+            .product("rig01_global")
+            .board("kalama")
+            .hardware("qcom")
+            .androidVersion("15")
+            .sdkInt(35)
+            .densityDpi(480)
+            .build()
+
+        assertTrue(custom.isCustom)
+        assertEquals("custom-rig-01", custom.profileId)
+        assertEquals("Lab Rig", custom.displayName)
+        assertEquals("Lab-X1", custom.model)
+        assertEquals("CipherLabs", custom.manufacturer)
+        assertEquals(35, custom.sdkInt)
+
+        val roundTripped = DeviceProfile.fromJsonString(custom.toJsonString())
+        assertEquals(custom, roundTripped)
+
+        val presets = DeviceProfileManager.availablePresets()
+        assertTrue(presets.any { it.presetKey == "Pixel 8" })
+        assertTrue(presets.any { it.presetKey == "Galaxy S24" })
+        assertEquals("Pixel 8", DeviceProfileManager.presetForName("Pixel 8").presetKey)
+    }
+
+    @Test
+    fun workspaceStorageManager_writesInspectsAndResetsSessionMetadata() = runTest {
+        val tempRoot = Files.createTempDirectory("cipher_workspace_test").toFile()
+        try {
+            val manager = WorkspaceStorageManager(tempRoot)
+            val space = VirtualSpaceEntity(id = 7L, name = "Testing Lab", tag = "LAB", virtualDpi = 480)
+            val app = VirtualAppEntity(id = 19L, spaceId = 7L, packageName = "com.demo.app", displayName = "Demo")
+            val profile = DeviceProfileManager.pixel9Pro()
+
+            val configFile = manager.recordSessionMetadata(space, app, profile)
+            assertTrue(configFile.exists())
+            val content = configFile.readText()
+            assertTrue(content.contains("\"spaceName\":\"Testing Lab\""))
+            assertTrue(content.contains("\"profileModel\":\"Pixel 9 Pro\""))
+
+            val stats = manager.inspectInstanceWorkspace(7L, 19L)
+            assertEquals(1, stats.fileCount)
+            assertTrue(stats.sizeBytes > 0L)
+            assertNotNull(stats.lastSessionRecordedAt)
+
+            assertTrue(manager.resetInstanceWorkspace(7L, 19L))
+            val emptyStats = manager.inspectInstanceWorkspace(7L, 19L)
+            assertEquals(0, emptyStats.fileCount)
+            assertEquals(0L, emptyStats.sizeBytes)
+
+            manager.recordSessionMetadata(space, app, profile)
+            assertTrue(manager.deleteSpaceWorkspaces(7L))
+            assertFalse(manager.spaceDirectory(7L).exists())
+        } finally {
+            tempRoot.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun octoRoutes_resolveTypedDestinationPatterns() {
+        assertEquals("spaces", OctoRoute.Spaces.routePattern)
+        assertEquals("permissions", OctoRoute.Permissions.routePattern)
+        assertEquals("sandbox", OctoRoute.Sandbox.routePattern)
+        assertEquals("app_detail/42", OctoRoute.AppDetail(42L).routePattern)
+        assertEquals("app_detail/{appId}", OctoRoute.AppDetail.PATTERN)
     }
 }

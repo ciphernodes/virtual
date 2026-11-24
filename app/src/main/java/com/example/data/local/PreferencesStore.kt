@@ -2,37 +2,74 @@ package com.example.data.local
 
 import android.content.Context
 import android.net.Uri
+import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.SharedPreferencesMigration
+import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
+import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.longPreferencesKey
+import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.preferencesDataStore
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import org.json.JSONArray
+
+private val Context.cipherDataStore: DataStore<Preferences> by preferencesDataStore(
+    name = "cipher_virtual_datastore",
+    produceMigrations = { context ->
+        listOf(SharedPreferencesMigration(context, "cipher_virtual_prefs"))
+    }
+)
 
 class PreferencesStore(context: Context) {
 
-    private val prefs = context.applicationContext
-        .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    private val dataStore = context.applicationContext.cipherDataStore
 
-    fun isDarkThemeEnabled(): Boolean = prefs.getBoolean(KEY_DARK_THEME, true)
-
-    fun setDarkThemeEnabled(enabled: Boolean) {
-        prefs.edit().putBoolean(KEY_DARK_THEME, enabled).apply()
+    val darkThemeFlow: Flow<Boolean> = dataStore.data.map { prefs ->
+        prefs[KEY_DARK_THEME] ?: true
     }
 
-    fun getSelectedSpaceId(): Long? {
-        val raw = prefs.getLong(KEY_SELECTED_SPACE_ID, UNSET_ID)
-        return raw.takeIf { it > 0L }
+    val selectedSpaceIdFlow: Flow<Long?> = dataStore.data.map { prefs ->
+        prefs[KEY_SELECTED_SPACE_ID]?.takeIf { it > 0L }
     }
 
-    fun setSelectedSpaceId(spaceId: Long?) {
-        prefs.edit().putLong(KEY_SELECTED_SPACE_ID, spaceId ?: UNSET_ID).apply()
+    val periodicIntegrityFlow: Flow<Boolean> = dataStore.data.map { prefs ->
+        prefs[KEY_PERIODIC_INTEGRITY] ?: true
     }
 
-    fun isPeriodicIntegrityEnabled(): Boolean =
-        prefs.getBoolean(KEY_PERIODIC_INTEGRITY, true)
-
-    fun setPeriodicIntegrityEnabled(enabled: Boolean) {
-        prefs.edit().putBoolean(KEY_PERIODIC_INTEGRITY, enabled).apply()
+    val attachedVaultUrisFlow: Flow<List<Uri>> = dataStore.data.map { prefs ->
+        parseUriList(prefs[KEY_VAULT_URIS])
     }
 
-    fun getAttachedVaultUris(): List<Uri> {
-        val raw = prefs.getString(KEY_VAULT_URIS, null) ?: return emptyList()
+    suspend fun setDarkThemeEnabled(enabled: Boolean) {
+        dataStore.edit { prefs -> prefs[KEY_DARK_THEME] = enabled }
+    }
+
+    suspend fun setSelectedSpaceId(spaceId: Long?) {
+        dataStore.edit { prefs -> prefs[KEY_SELECTED_SPACE_ID] = spaceId ?: UNSET_ID }
+    }
+
+    suspend fun setPeriodicIntegrityEnabled(enabled: Boolean) {
+        dataStore.edit { prefs -> prefs[KEY_PERIODIC_INTEGRITY] = enabled }
+    }
+
+    suspend fun setAttachedVaultUris(uris: List<Uri>) {
+        val array = JSONArray()
+        uris.forEach { array.put(it.toString()) }
+        dataStore.edit { prefs -> prefs[KEY_VAULT_URIS] = array.toString() }
+    }
+
+    suspend fun getDarkThemeEnabled(): Boolean = darkThemeFlow.first()
+
+    suspend fun getSelectedSpaceId(): Long? = selectedSpaceIdFlow.first()
+
+    suspend fun getPeriodicIntegrityEnabled(): Boolean = periodicIntegrityFlow.first()
+
+    suspend fun getAttachedVaultUris(): List<Uri> = attachedVaultUrisFlow.first()
+
+    private fun parseUriList(raw: String?): List<Uri> {
+        if (raw.isNullOrBlank()) return emptyList()
         return runCatching {
             val array = JSONArray(raw)
             buildList {
@@ -46,18 +83,11 @@ class PreferencesStore(context: Context) {
         }.getOrDefault(emptyList())
     }
 
-    fun setAttachedVaultUris(uris: List<Uri>) {
-        val array = JSONArray()
-        uris.forEach { array.put(it.toString()) }
-        prefs.edit().putString(KEY_VAULT_URIS, array.toString()).apply()
-    }
-
     companion object {
-        private const val PREFS_NAME = "cipher_virtual_prefs"
-        private const val KEY_DARK_THEME = "dark_theme_enabled"
-        private const val KEY_SELECTED_SPACE_ID = "selected_space_id"
-        private const val KEY_PERIODIC_INTEGRITY = "periodic_integrity_enabled"
-        private const val KEY_VAULT_URIS = "attached_vault_uris"
+        private val KEY_DARK_THEME = booleanPreferencesKey("dark_theme_enabled")
+        private val KEY_SELECTED_SPACE_ID = longPreferencesKey("selected_space_id")
+        private val KEY_PERIODIC_INTEGRITY = booleanPreferencesKey("periodic_integrity_enabled")
+        private val KEY_VAULT_URIS = stringPreferencesKey("attached_vault_uris")
         private const val UNSET_ID = -1L
     }
 }

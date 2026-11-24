@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   build-debug-apk:
-    name: Build & Test Debug APK
+    name: Build, Lint & Test APK
     runs-on: ubuntu-latest
     timeout-minutes: 25
 
@@ -51,6 +51,12 @@ jobs:
 
       - name: Run unit tests
         run: gradle :app:testDebugUnitTest
+
+      - name: Run Android Lint
+        run: gradle :app:lintDebug
+
+      - name: Verify R8 release minification
+        run: gradle :app:minifyReleaseWithR8
 
       - name: Build Debug APK
         run: gradle :app:assembleDebug

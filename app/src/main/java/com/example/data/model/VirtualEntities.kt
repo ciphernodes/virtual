@@ -40,5 +40,7 @@ data class VirtualAppEntity(
     val performanceMode: String = "Balanced",
     val launchCount: Int = 0,
     val lastLaunchedAt: Long? = null,
-    val addedAt: Long = System.currentTimeMillis()
+    val addedAt: Long = System.currentTimeMillis(),
+    val notes: String = "",
+    val lastProfileId: String? = null
 )
