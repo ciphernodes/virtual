@@ -49,4 +49,7 @@
     <string name="status_vault_removed">Removed attachment from Virtual Vault</string>
     <string name="status_storage_granted">Storage folder access granted to Cipher Virtual</string>
     <string name="status_workspace_reset">Cleared local session data for %1$s (%2$s)</string>
+    <string name="permissions_dashboard_title">Permissions Dashboard</string>
+    <string name="permissions_dashboard_subtitle">Allow all required device and system permissions to enable workspace features.</string>
+    <string name="permissions_required_section_title">Required Permissions</string>
 </resources>

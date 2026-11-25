@@ -255,9 +255,34 @@ class CipherVirtualUnitTests {
     @Test
     fun octoRoutes_resolveTypedDestinationPatterns() {
         assertEquals("spaces", OctoRoute.Spaces.routePattern)
-        assertEquals("permissions", OctoRoute.Permissions.routePattern)
         assertEquals("sandbox", OctoRoute.Sandbox.routePattern)
         assertEquals("app_detail/42", OctoRoute.AppDetail(42L).routePattern)
         assertEquals("app_detail/{appId}", OctoRoute.AppDetail.PATTERN)
+    }
+
+    @Test
+    fun devicePermissionItem_distinguishesRuntimeAndSpecialAccess() {
+        val runtimeItem = com.example.data.model.DevicePermissionItem(
+            key = "camera",
+            title = "Camera Hardware",
+            description = "Camera capture",
+            permissions = listOf("android.permission.CAMERA"),
+            isGranted = false
+        )
+        assertFalse(runtimeItem.isSpecialAccess)
+
+        val specialItem = com.example.data.model.DevicePermissionItem(
+            key = "overlay",
+            title = "Display Over Other Apps",
+            description = "Overlay access",
+            permissions = listOf("android.permission.SYSTEM_ALERT_WINDOW"),
+            isGranted = false,
+            isSpecialAccess = true
+        )
+        assertTrue(specialItem.isSpecialAccess)
+
+        val bridge = DeviceBridgeSnapshot()
+        assertFalse(bridge.allRequiredGranted)
+        assertTrue(bridge.permissions.isEmpty())
     }
 }

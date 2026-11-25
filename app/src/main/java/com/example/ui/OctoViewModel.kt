@@ -741,6 +741,15 @@ class OctoViewModel(
         statusMessageFlow.value = null
     }
 
+    override fun onCleared() {
+        integrityCollectorJob?.cancel()
+        resourceCollectorJob?.cancel()
+        fallbackTelemetryJob?.cancel()
+        boundIntegrityService = null
+        boundResourceService = null
+        super.onCleared()
+    }
+
     private fun formatText(resId: Int, fallback: String, vararg args: Any): String {
         return stringLookup?.invoke(resId, args) ?: fallback
     }

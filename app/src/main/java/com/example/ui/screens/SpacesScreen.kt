@@ -38,7 +38,6 @@ import androidx.compose.material.icons.rounded.Memory
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Speed
-import androidx.compose.material.icons.rounded.VerifiedUser
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilledTonalButton
@@ -78,7 +77,6 @@ import com.example.ui.components.AnimatedPulseDot
 import com.example.ui.components.AppIconBadge
 import com.example.ui.components.LiveSparklineChart
 import com.example.ui.components.TelemetryPill
-import com.example.ui.components.VirtualInstanceLauncher
 import com.example.ui.theme.spaceAccentColors
 import java.util.Locale
 
@@ -91,24 +89,16 @@ private enum class SpaceSortOrder(val label: String) {
 @Composable
 fun SpacesScreen(
     uiState: OctoUiState,
-    onSelectSpace: (Long) -> Unit,
-    onCreateSpace: (String, String, Int) -> Unit,
-    onEditSpace: (VirtualSpaceEntity, String, String, Int) -> Unit,
-    onDeleteSpace: (Long) -> Unit,
     onAddApp: (InstalledAppInfo) -> Unit,
     onDuplicateApp: (VirtualAppEntity) -> Unit,
     onRefreshInstalledApps: () -> Unit,
     onRequestIcons: (List<String>) -> Unit,
     onOpenLaunchSession: (VirtualAppEntity) -> Unit,
     onInspectApp: (VirtualAppEntity) -> Unit,
-    onOpenPermissionsTab: () -> Unit,
-    onOpenSandboxConfig: () -> Unit,
     onRemoveVirtualApp: (VirtualAppEntity) -> Unit,
     modifier: Modifier = Modifier
 ) {
     var showImportSheet by remember { mutableStateOf(false) }
-    var showCreateSpaceDialog by remember { mutableStateOf(false) }
-    var editingSpace by remember { mutableStateOf<VirtualSpaceEntity?>(null) }
     var spaceSearchQuery by remember { mutableStateOf("") }
     var perfFilter by remember { mutableStateOf<String?>(null) }
     var sortOrder by remember { mutableStateOf(SpaceSortOrder.RECENT) }
@@ -155,24 +145,7 @@ fun SpacesScreen(
                 HeroWorkspaceBanner(
                     activeSpace = activeSpace,
                     appCount = uiState.appsInSpace.size,
-                    grantedPermissions = uiState.deviceBridge.grantedCount,
-                    totalPermissions = uiState.deviceBridge.totalCount,
-                    onImportClick = { showImportSheet = true },
-                    onPermissionsClick = onOpenPermissionsTab
-                )
-            }
-
-            item(span = { GridItemSpan(columns) }) {
-                VirtualInstanceLauncher(
-                    spaces = uiState.spaces,
-                    activeSpaceId = activeSpace?.id,
-                    allVirtualApps = uiState.allVirtualApps,
-                    resourceTelemetry = uiState.resourceTelemetry,
-                    onSelectSpace = onSelectSpace,
-                    onCreateSpaceClick = { showCreateSpaceDialog = true },
-                    onEditSpaceClick = { editingSpace = it },
-                    onDeleteSpace = onDeleteSpace,
-                    onOpenSandboxConfig = onOpenSandboxConfig
+                    onImportClick = { showImportSheet = true }
                 )
             }
 
@@ -388,36 +361,13 @@ fun SpacesScreen(
             onDismiss = { showImportSheet = false }
         )
     }
-
-    if (showCreateSpaceDialog || editingSpace != null) {
-        CreateEditSpaceDialog(
-            editingSpace = editingSpace,
-            onConfirm = { name, tag, accent ->
-                val target = editingSpace
-                if (target != null) {
-                    onEditSpace(target, name, tag, accent)
-                } else {
-                    onCreateSpace(name, tag, accent)
-                }
-                showCreateSpaceDialog = false
-                editingSpace = null
-            },
-            onDismiss = {
-                showCreateSpaceDialog = false
-                editingSpace = null
-            }
-        )
-    }
 }
 
 @Composable
 private fun HeroWorkspaceBanner(
     activeSpace: VirtualSpaceEntity?,
     appCount: Int,
-    grantedPermissions: Int,
-    totalPermissions: Int,
-    onImportClick: () -> Unit,
-    onPermissionsClick: () -> Unit
+    onImportClick: () -> Unit
 ) {
     val spaceAccent = spaceAccentColors(activeSpace?.accentIndex ?: 0)
     Surface(
@@ -513,23 +463,6 @@ private fun HeroWorkspaceBanner(
                             icon = Icons.Rounded.Apps,
                             containerColor = spaceAccent.container,
                             contentColor = spaceAccent.onContainer
-                        )
-                    }
-                    item {
-                        TelemetryPill(
-                            label = "$grantedPermissions/$totalPermissions ${stringResource(R.string.permissions_granted_label)}",
-                            icon = Icons.Rounded.VerifiedUser,
-                            containerColor = if (grantedPermissions == totalPermissions && totalPermissions > 0) {
-                                MaterialTheme.colorScheme.tertiaryContainer
-                            } else {
-                                MaterialTheme.colorScheme.surfaceContainerHigh
-                            },
-                            contentColor = if (grantedPermissions == totalPermissions && totalPermissions > 0) {
-                                MaterialTheme.colorScheme.onTertiaryContainer
-                            } else {
-                                MaterialTheme.colorScheme.onSurfaceVariant
-                            },
-                            modifier = Modifier.clickable(onClick = onPermissionsClick)
                         )
                     }
                     activeSpace?.let {

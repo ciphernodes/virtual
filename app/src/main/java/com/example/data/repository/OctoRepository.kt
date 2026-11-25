@@ -28,10 +28,11 @@ class OctoRepository(
         dao.observeAppsForSpace(spaceId)
 
     suspend fun ensureDefaultSpaces() {
-        if (dao.getSpaceCount() == 0) {
+        val existingSpaces = dao.getAllSpacesSnapshot()
+        if (existingSpaces.isEmpty()) {
             dao.insertSpace(
                 VirtualSpaceEntity(
-                    name = "Cipher Primary",
+                    name = "Cipher Workspace",
                     tag = "MAIN",
                     accentIndex = 0,
                     deviceModelPreset = "ROG Phone 8 Pro",
@@ -41,18 +42,13 @@ class OctoRepository(
                     virtualDpi = 440
                 )
             )
-            dao.insertSpace(
-                VirtualSpaceEntity(
-                    name = "Dual Account",
-                    tag = "DUAL",
-                    accentIndex = 1,
-                    deviceModelPreset = "Pixel 9 Pro",
-                    isolatedStorage = true,
-                    frameRateHud = false,
-                    permissionBridgeEnabled = true,
-                    virtualDpi = 420
-                )
-            )
+        } else if (existingSpaces.size > 1) {
+            val primary = existingSpaces.first()
+            existingSpaces.drop(1).forEach { extra ->
+                dao.moveAppsToSpace(extra.id, primary.id)
+                dao.deleteSpace(extra.id)
+                workspaceStorage?.deleteSpaceWorkspaces(extra.id)
+            }
         }
     }
 

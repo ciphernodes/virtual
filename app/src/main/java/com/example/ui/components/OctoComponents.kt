@@ -25,7 +25,6 @@ import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Layers
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Security
-import androidx.compose.material.icons.rounded.VerifiedUser
 import androidx.compose.material.icons.rounded.Work
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -157,14 +156,11 @@ fun VirtualLaunchSessionDialog(
     activeDeviceProfile: DeviceProfile?,
     appIcon: ImageBitmap?,
     hostDisplaySummary: String,
-    grantedPermissionsCount: Int,
-    totalPermissionsCount: Int,
     hasWorkProfile: Boolean,
     onChangePerformanceMode: (String) -> Unit,
     onRenameInstance: (String) -> Unit,
     onCloneInstance: () -> Unit,
     onInspectDetails: () -> Unit,
-    onOpenPermissions: () -> Unit,
     onLaunchNow: (preferWorkProfile: Boolean) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -249,15 +245,6 @@ fun VirtualLaunchSessionDialog(
                             icon = Icons.Rounded.Layers,
                             label = "Host Panel",
                             value = hostDisplaySummary
-                        )
-                        SessionDetailRow(
-                            icon = Icons.Rounded.VerifiedUser,
-                            label = "Device Access",
-                            value = if (space?.permissionBridgeEnabled != false) {
-                                "$grantedPermissionsCount / $totalPermissionsCount permissions active"
-                            } else {
-                                "Sandboxed (Bridge Off)"
-                            }
                         )
                         SessionDetailRow(
                             icon = Icons.Rounded.Work,
@@ -385,19 +372,11 @@ fun VirtualLaunchSessionDialog(
             }
         },
         dismissButton = {
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                TextButton(
-                    onClick = onOpenPermissions,
-                    modifier = Modifier.testTag("session_permissions_button")
-                ) {
-                    Text("Permissions")
-                }
-                TextButton(
-                    onClick = onDismiss,
-                    modifier = Modifier.testTag("session_cancel_button")
-                ) {
-                    Text("Close")
-                }
+            TextButton(
+                onClick = onDismiss,
+                modifier = Modifier.testTag("session_cancel_button")
+            ) {
+                Text("Close")
             }
         },
         confirmButton = {

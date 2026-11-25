@@ -19,7 +19,8 @@ data class DevicePermissionItem(
     val description: String,
     val permissions: List<String>,
     val isGranted: Boolean,
-    val minApi: Int = 26
+    val minApi: Int = 26,
+    val isSpecialAccess: Boolean = false
 )
 
 data class DeviceBridgeSnapshot(

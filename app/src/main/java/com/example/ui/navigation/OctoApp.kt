@@ -13,10 +13,8 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Layers
 import androidx.compose.material.icons.outlined.Tune
-import androidx.compose.material.icons.outlined.VerifiedUser
 import androidx.compose.material.icons.rounded.Layers
 import androidx.compose.material.icons.rounded.Tune
-import androidx.compose.material.icons.rounded.VerifiedUser
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -53,10 +51,9 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.example.R
 import com.example.ui.OctoViewModel
+import com.example.ui.components.PermissionPromptHost
 import com.example.ui.components.VirtualLaunchSessionDialog
 import com.example.ui.screens.AppDetailScreen
-import com.example.ui.screens.PermissionGateScreen
-import com.example.ui.screens.PermissionsScreen
 import com.example.ui.screens.SandboxConfigScreen
 import com.example.ui.screens.SpacesScreen
 
@@ -65,10 +62,6 @@ sealed interface OctoRoute {
 
     data object Spaces : OctoRoute {
         override val routePattern: String = "spaces"
-    }
-
-    data object Permissions : OctoRoute {
-        override val routePattern: String = "permissions"
     }
 
     data object Sandbox : OctoRoute {
@@ -95,7 +88,6 @@ private data class OctoNavItem(
 
 private val NAV_ITEMS = listOf(
     OctoNavItem(OctoRoute.Spaces, R.string.nav_spaces, Icons.Rounded.Layers, Icons.Outlined.Layers),
-    OctoNavItem(OctoRoute.Permissions, R.string.nav_permissions, Icons.Rounded.VerifiedUser, Icons.Outlined.VerifiedUser),
     OctoNavItem(OctoRoute.Sandbox, R.string.nav_sandbox, Icons.Rounded.Tune, Icons.Outlined.Tune)
 )
 
@@ -124,13 +116,12 @@ fun OctoApp(viewModel: OctoViewModel) {
         return
     }
 
-    // Startup permission gate (#1 preserved as requested)
+    // Prompt for missing permissions directly on launch/resume without displaying a permissions screen
     if (!uiState.deviceBridge.allRequiredGranted) {
-        PermissionGateScreen(
-            uiState = uiState,
-            missingPermissions = viewModel::getMissingRuntimePermissions,
-            onPermissionsResult = viewModel::onPermissionsResult,
-            onStorageTreePicked = viewModel::onStorageTreePicked
+        PermissionPromptHost(
+            bridge = uiState.deviceBridge,
+            missingRuntimePermissions = viewModel::getMissingRuntimePermissions,
+            onPermissionsResult = viewModel::onPermissionsResult
         )
         return
     }
@@ -232,10 +223,6 @@ fun OctoApp(viewModel: OctoViewModel) {
                     composable(OctoRoute.Spaces.routePattern) {
                         SpacesScreen(
                             uiState = uiState,
-                            onSelectSpace = viewModel::selectSpace,
-                            onCreateSpace = viewModel::createSpace,
-                            onEditSpace = viewModel::editSpace,
-                            onDeleteSpace = viewModel::deleteSpace,
                             onAddApp = viewModel::addAppToActiveSpace,
                             onDuplicateApp = viewModel::duplicateVirtualApp,
                             onRefreshInstalledApps = viewModel::refreshInstalledApps,
@@ -244,20 +231,7 @@ fun OctoApp(viewModel: OctoViewModel) {
                             onInspectApp = { app ->
                                 navController.navigate(OctoRoute.AppDetail.routeFor(app.id))
                             },
-                            onOpenPermissionsTab = { navigateToTab(OctoRoute.Permissions) },
-                            onOpenSandboxConfig = { navigateToTab(OctoRoute.Sandbox) },
                             onRemoveVirtualApp = viewModel::removeVirtualApp
-                        )
-                    }
-                    composable(OctoRoute.Permissions.routePattern) {
-                        PermissionsScreen(
-                            uiState = uiState,
-                            missingPermissions = viewModel::getMissingRuntimePermissions,
-                            onPermissionsResult = viewModel::onPermissionsResult,
-                            onRefreshBridge = viewModel::refreshDeviceBridge,
-                            onVaultUriPicked = viewModel::onVaultUriPicked,
-                            onRemoveVaultUri = viewModel::removeVaultUri,
-                            onStorageTreePicked = viewModel::onStorageTreePicked
                         )
                     }
                     composable(OctoRoute.Sandbox.routePattern) {
@@ -305,8 +279,6 @@ fun OctoApp(viewModel: OctoViewModel) {
             activeDeviceProfile = uiState.activeDeviceProfile,
             appIcon = uiState.appIcons[launchApp.packageName],
             hostDisplaySummary = uiState.deviceBridge.hostDisplaySummary,
-            grantedPermissionsCount = uiState.deviceBridge.grantedCount,
-            totalPermissionsCount = uiState.deviceBridge.totalCount,
             hasWorkProfile = viewModel.hasWorkProfileTarget(launchApp.packageName),
             onChangePerformanceMode = { mode ->
                 viewModel.updateVirtualApp(launchApp.copy(performanceMode = mode))
@@ -321,10 +293,6 @@ fun OctoApp(viewModel: OctoViewModel) {
             onInspectDetails = {
                 viewModel.dismissLaunchSession()
                 navController.navigate(OctoRoute.AppDetail.routeFor(launchApp.id))
-            },
-            onOpenPermissions = {
-                viewModel.dismissLaunchSession()
-                navigateToTab(OctoRoute.Permissions)
             },
             onLaunchNow = { preferWork ->
                 viewModel.launchAppFromSession(launchApp, preferWorkProfile = preferWork)

@@ -14,6 +14,9 @@ interface OctoDao {
     @Query("SELECT * FROM virtual_spaces ORDER BY createdAt ASC")
     fun observeSpaces(): Flow<List<VirtualSpaceEntity>>
 
+    @Query("SELECT * FROM virtual_spaces ORDER BY createdAt ASC")
+    suspend fun getAllSpacesSnapshot(): List<VirtualSpaceEntity>
+
     @Query("SELECT COUNT(*) FROM virtual_spaces")
     suspend fun getSpaceCount(): Int
 
@@ -25,6 +28,9 @@ interface OctoDao {
 
     @Query("DELETE FROM virtual_spaces WHERE id = :spaceId")
     suspend fun deleteSpace(spaceId: Long)
+
+    @Query("UPDATE virtual_apps SET spaceId = :toSpaceId WHERE spaceId = :fromSpaceId")
+    suspend fun moveAppsToSpace(fromSpaceId: Long, toSpaceId: Long)
 
     @Query("SELECT * FROM virtual_apps WHERE spaceId = :spaceId ORDER BY addedAt DESC")
     fun observeAppsForSpace(spaceId: Long): Flow<List<VirtualAppEntity>>
