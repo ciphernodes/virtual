@@ -9,6 +9,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
+import android.os.Environment
 import android.os.PowerManager
 import android.os.Process
 import android.provider.Settings
@@ -41,6 +42,10 @@ class PermissionManager(private val context: Context) {
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 add(Manifest.permission.POST_NOTIFICATIONS)
+            }
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+                add(Manifest.permission.READ_EXTERNAL_STORAGE)
+                add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
             }
         }
 
@@ -170,6 +175,36 @@ class PermissionManager(private val context: Context) {
             )
         }
 
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            items.add(
+                DevicePermissionItem(
+                    key = "all_files_storage",
+                    title = "All Files Access",
+                    description = "Manage workspace and shared files across device storage",
+                    permissions = listOf(Manifest.permission.MANAGE_EXTERNAL_STORAGE),
+                    isGranted = hasAllFilesAccess(),
+                    minApi = Build.VERSION_CODES.R,
+                    isSpecialAccess = true
+                )
+            )
+        } else {
+            items.add(
+                DevicePermissionItem(
+                    key = "legacy_storage",
+                    title = "Storage Access",
+                    description = "Read and write files on device storage",
+                    permissions = listOf(
+                        Manifest.permission.READ_EXTERNAL_STORAGE,
+                        Manifest.permission.WRITE_EXTERNAL_STORAGE
+                    ),
+                    isGranted = hasAll(
+                        Manifest.permission.READ_EXTERNAL_STORAGE,
+                        Manifest.permission.WRITE_EXTERNAL_STORAGE
+                    )
+                )
+            )
+        }
+
         items.addAll(
             listOf(
                 DevicePermissionItem(
@@ -285,6 +320,17 @@ class PermissionManager(private val context: Context) {
         }.getOrDefault(false)
     }
 
+    fun hasAllFilesAccess(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            runCatching { Environment.isExternalStorageManager() }.getOrDefault(false)
+        } else {
+            hasAll(
+                Manifest.permission.READ_EXTERNAL_STORAGE,
+                Manifest.permission.WRITE_EXTERNAL_STORAGE
+            )
+        }
+    }
+
     fun hasStorageFolderGrant(): Boolean {
         return runCatching {
             context.contentResolver.persistedUriPermissions.any {
@@ -302,12 +348,32 @@ class PermissionManager(private val context: Context) {
 
     fun openSpecialAccessSettings(key: String, hostContext: Context) {
         when (key) {
+            "all_files_storage" -> openAllFilesAccessSettings(hostContext)
             "overlay" -> openOverlaySettings(hostContext)
             "write_settings" -> openWriteSettings(hostContext)
             "usage_stats" -> openUsageAccessSettings(hostContext)
             "install_packages" -> openInstallUnknownAppsSettings(hostContext)
             "battery" -> openBatteryOptimizationPrompt(hostContext)
             else -> openAppSettings(hostContext)
+        }
+    }
+
+    fun openAllFilesAccessSettings(hostContext: Context) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val perAppIntent = Intent(
+                Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                Uri.parse("package:${hostContext.packageName}")
+            ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            val allAppsIntent = Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            runCatching {
+                hostContext.startActivity(perAppIntent)
+            }.onFailure {
+                runCatching { hostContext.startActivity(allAppsIntent) }
+                    .onFailure { openAppSettings(hostContext) }
+            }
+        } else {
+            openAppSettings(hostContext)
         }
     }
 

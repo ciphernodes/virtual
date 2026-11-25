@@ -17,8 +17,14 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import com.example.data.model.InstalledAppInfo
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import java.io.File
+import kotlin.math.roundToInt
 
 enum class LaunchTargetMode {
     HOST_LAUNCHER,
@@ -27,6 +33,7 @@ enum class LaunchTargetMode {
 
 class DeviceAppScanner(private val context: Context) {
 
+    private val cacheLock = Any()
     private val iconCache = LruCache<String, ImageBitmap>(256)
 
     suspend fun scanInstalledLauncherApps(): List<InstalledAppInfo> = withContext(Dispatchers.IO) {
@@ -80,7 +87,7 @@ class DeviceAppScanner(private val context: Context) {
                 label = label,
                 versionName = versionName,
                 isGame = isGame,
-                icon = iconCache.get(pkg),
+                icon = getCachedIcon(pkg),
                 isSystemApp = isSystemApp,
                 targetSdk = appInfo.targetSdkVersion,
                 apkSizeMb = apkSizeMb
@@ -94,19 +101,36 @@ class DeviceAppScanner(private val context: Context) {
 
     suspend fun loadAppIcons(packageNames: List<String>): Map<String, ImageBitmap> =
         withContext(Dispatchers.IO) {
-            val result = mutableMapOf<String, ImageBitmap>()
-            packageNames.distinct().forEach { pkg ->
-                getAppIcon(pkg)?.let { result[pkg] = it }
+            val distinctPackages = packageNames.distinct()
+            if (distinctPackages.isEmpty()) return@withContext emptyMap()
+            val semaphore = Semaphore(ICON_DECODE_CONCURRENCY)
+            coroutineScope {
+                distinctPackages.map { pkg ->
+                    async {
+                        semaphore.withPermit {
+                            getAppIcon(pkg)?.let { icon -> pkg to icon }
+                        }
+                    }
+                }.awaitAll()
+                    .filterNotNull()
+                    .toMap()
             }
-            result
         }
 
     fun getAppIcon(packageName: String): ImageBitmap? {
-        iconCache.get(packageName)?.let { return it }
+        getCachedIcon(packageName)?.let { return it }
         return runCatching {
             val drawable = context.packageManager.getApplicationIcon(packageName)
-            drawableToImageBitmap(drawable).also { iconCache.put(packageName, it) }
+            drawableToImageBitmap(drawable).also { decoded ->
+                synchronized(cacheLock) {
+                    iconCache.put(packageName, decoded)
+                }
+            }
         }.getOrNull()
+    }
+
+    private fun getCachedIcon(packageName: String): ImageBitmap? = synchronized(cacheLock) {
+        iconCache.get(packageName)
     }
 
     fun hasWorkProfileTarget(packageName: String): Boolean {
@@ -159,15 +183,29 @@ class DeviceAppScanner(private val context: Context) {
                     bmp
                 }
                 if (safeBmp != null) {
-                    return if (safeBmp.width <= ICON_SIZE_PX && safeBmp.height <= ICON_SIZE_PX) {
-                        safeBmp.asImageBitmap()
-                    } else {
-                        Bitmap.createScaledBitmap(safeBmp, ICON_SIZE_PX, ICON_SIZE_PX, true).asImageBitmap()
+                    if (safeBmp.width <= ICON_SIZE_PX && safeBmp.height <= ICON_SIZE_PX) {
+                        return safeBmp.asImageBitmap()
                     }
+                    val scale = ICON_SIZE_PX.toFloat() / maxOf(safeBmp.width, safeBmp.height).toFloat()
+                    val targetWidth = (safeBmp.width * scale).roundToInt().coerceAtLeast(1)
+                    val targetHeight = (safeBmp.height * scale).roundToInt().coerceAtLeast(1)
+                    return Bitmap.createScaledBitmap(safeBmp, targetWidth, targetHeight, true).asImageBitmap()
                 }
             }
         }
-        val bitmap = Bitmap.createBitmap(ICON_SIZE_PX, ICON_SIZE_PX, Bitmap.Config.ARGB_8888)
+
+        val intrinsicWidth = drawable.intrinsicWidth
+        val intrinsicHeight = drawable.intrinsicHeight
+        val (targetWidth, targetHeight) = if (intrinsicWidth > 0 && intrinsicHeight > 0) {
+            val scale = ICON_SIZE_PX.toFloat() / maxOf(intrinsicWidth, intrinsicHeight).toFloat()
+            val clampedScale = minOf(scale, 1f)
+            (intrinsicWidth * clampedScale).roundToInt().coerceAtLeast(1) to
+                (intrinsicHeight * clampedScale).roundToInt().coerceAtLeast(1)
+        } else {
+            ICON_SIZE_PX to ICON_SIZE_PX
+        }
+
+        val bitmap = Bitmap.createBitmap(targetWidth, targetHeight, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
         drawable.setBounds(0, 0, canvas.width, canvas.height)
         drawable.draw(canvas)
@@ -176,5 +214,6 @@ class DeviceAppScanner(private val context: Context) {
 
     companion object {
         private const val ICON_SIZE_PX = 84
+        private const val ICON_DECODE_CONCURRENCY = 4
     }
 }

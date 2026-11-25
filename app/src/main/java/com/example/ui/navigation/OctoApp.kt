@@ -245,7 +245,10 @@ fun OctoApp(viewModel: OctoViewModel) {
                             onToggleTheme = viewModel::toggleTheme,
                             onRunIntegrityCheck = viewModel::runIntegrityCheckNow,
                             onTogglePeriodicIntegrity = viewModel::setPeriodicIntegrityEnabled,
-                            onRefreshResources = viewModel::refreshResourceTelemetry
+                            onRefreshResources = viewModel::refreshResourceTelemetry,
+                            onVaultUriPicked = viewModel::onVaultUriPicked,
+                            onRemoveVaultUri = viewModel::removeVaultUri,
+                            onStorageTreePicked = viewModel::onStorageTreePicked
                         )
                     }
                     composable(

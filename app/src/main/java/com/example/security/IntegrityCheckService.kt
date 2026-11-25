@@ -1,9 +1,10 @@
-package com.ciphernodes.ciphervirtual.security
+package com.example.security
 
 import android.app.Service
 import android.content.Intent
 import android.os.Binder
 import android.os.IBinder
+import com.example.CipherVirtualApp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -23,7 +24,7 @@ class IntegrityCheckService : Service() {
     }
 
     private val binder = LocalBinder()
-    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private lateinit var integrityManager: IntegrityManager
     private val callbacks = CopyOnWriteArraySet<IntegrityStatusCallback>()
 
@@ -32,7 +33,8 @@ class IntegrityCheckService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        integrityManager = IntegrityManager(applicationContext)
+        integrityManager = (application as? CipherVirtualApp)?.integrityManager
+            ?: IntegrityManager(applicationContext)
         serviceScope.launch {
             integrityManager.status.collect { snapshot ->
                 callbacks.forEach { callback ->
@@ -91,9 +93,9 @@ class IntegrityCheckService : Service() {
     }
 
     companion object {
-        const val ACTION_START_PERIODIC = "com.ciphernodes.ciphervirtual.action.START_PERIODIC_INTEGRITY"
-        const val ACTION_VERIFY_NOW = "com.ciphernodes.ciphervirtual.action.VERIFY_INTEGRITY_NOW"
-        const val ACTION_STOP_PERIODIC = "com.ciphernodes.ciphervirtual.action.STOP_PERIODIC_INTEGRITY"
+        const val ACTION_START_PERIODIC = "com.cipher.virtual.action.START_PERIODIC_INTEGRITY"
+        const val ACTION_VERIFY_NOW = "com.cipher.virtual.action.VERIFY_INTEGRITY_NOW"
+        const val ACTION_STOP_PERIODIC = "com.cipher.virtual.action.STOP_PERIODIC_INTEGRITY"
         const val EXTRA_INTERVAL_MILLIS = "extra_interval_millis"
         private const val DEFAULT_INTERVAL_MILLIS = 15L * 60L * 1000L
     }

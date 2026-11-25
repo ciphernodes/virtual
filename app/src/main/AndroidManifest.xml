@@ -47,6 +47,9 @@
     <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
 
     <!-- Storage & Scoped Media -->
+    <uses-permission
+        android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
+        tools:ignore="ScopedStorage" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
@@ -86,6 +89,7 @@
     </queries>
 
     <application
+        android:name=".CipherVirtualApp"
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:enableOnBackInvokedCallback="true"
@@ -94,14 +98,14 @@
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
-        android:theme="@style/Theme.MyApplication"
+        android:theme="@style/Theme.CipherVirtual"
         android:usesCleartextTraffic="false"
         tools:targetApi="36">
         <activity
             android:name=".MainActivity"
             android:exported="true"
             android:label="@string/app_name"
-            android:theme="@style/Theme.MyApplication">
+            android:theme="@style/Theme.CipherVirtual">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
 
@@ -110,11 +114,11 @@
         </activity>
 
         <service
-            android:name="com.ciphernodes.ciphervirtual.security.IntegrityCheckService"
+            android:name="com.example.security.IntegrityCheckService"
             android:exported="false" />
 
         <service
-            android:name="com.ciphernodes.ciphervirtual.monitoring.ResourceMonitorService"
+            android:name="com.example.monitoring.ResourceMonitorService"
             android:exported="false" />
     </application>
 

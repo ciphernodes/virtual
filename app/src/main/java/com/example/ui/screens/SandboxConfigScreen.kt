@@ -1,6 +1,8 @@
 package com.example.ui.screens
 
+import android.net.Uri
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -17,10 +19,9 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.DarkMode
 import androidx.compose.material.icons.rounded.DeveloperBoard
@@ -30,20 +31,16 @@ import androidx.compose.material.icons.rounded.RestartAlt
 import androidx.compose.material.icons.rounded.Security
 import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material.icons.rounded.VerifiedUser
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -53,6 +50,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -80,6 +78,9 @@ fun SandboxConfigScreen(
     onRunIntegrityCheck: () -> Unit,
     onTogglePeriodicIntegrity: (Boolean) -> Unit,
     onRefreshResources: () -> Unit,
+    onVaultUriPicked: (Uri?) -> Unit = {},
+    onRemoveVaultUri: (Uri) -> Unit = {},
+    onStorageTreePicked: (Uri?) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val activeSpace = uiState.activeSpace
@@ -112,7 +113,10 @@ fun SandboxConfigScreen(
                             style = MaterialTheme.typography.headlineMedium
                         )
                         Text(
-                            text = "Configure ${activeSpace?.name ?: "Space"} environment & runtime",
+                            text = stringResource(
+                                R.string.sandbox_subtitle_format,
+                                activeSpace?.name ?: stringResource(R.string.space_fallback_name)
+                            ),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -128,7 +132,7 @@ fun SandboxConfigScreen(
                     ) {
                         Icon(
                             imageVector = if (uiState.darkThemeEnabled) Icons.Rounded.LightMode else Icons.Rounded.DarkMode,
-                            contentDescription = "Toggle theme mode"
+                            contentDescription = stringResource(R.string.cd_toggle_theme)
                         )
                     }
                 }
@@ -136,6 +140,9 @@ fun SandboxConfigScreen(
 
             if (activeSpace != null) {
                 item {
+                    var dpiDraft by remember(activeSpace.id, activeSpace.virtualDpi) {
+                        mutableIntStateOf(activeSpace.virtualDpi.coerceIn(240, 640))
+                    }
                     Surface(
                         shape = MaterialTheme.shapes.large,
                         color = MaterialTheme.colorScheme.surface,
@@ -161,7 +168,7 @@ fun SandboxConfigScreen(
                                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
                                     Icon(Icons.Rounded.DeveloperBoard, contentDescription = null, tint = spaceAccent.accent)
-                                    Text("Display & Hardware Preset", style = MaterialTheme.typography.titleMedium)
+                                    Text(stringResource(R.string.hardware_preset_title), style = MaterialTheme.typography.titleMedium)
                                 }
                                 FilledTonalButton(
                                     onClick = {
@@ -169,65 +176,109 @@ fun SandboxConfigScreen(
                                         showCustomProfileDialog = true
                                     },
                                     modifier = Modifier
-                                        .height(40.dp)
+                                        .height(48.dp)
                                         .testTag("new_custom_profile_button")
                                 ) {
                                     Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(16.dp))
                                     Spacer(Modifier.width(4.dp))
-                                    Text("Custom")
+                                    Text(stringResource(R.string.custom_action))
                                 }
                             }
-                            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            LazyRow(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.testTag("device_presets_row")
+                            ) {
                                 items(uiState.availableDeviceProfiles, key = { it.profileId }) { profile ->
                                     val selected = activeSpace.deviceModelPreset.equals(profile.presetKey, ignoreCase = true)
-                                    FilterChip(
-                                        selected = selected,
-                                        onClick = {
-                                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                            onSelectDeviceProfile(activeSpace, profile)
-                                        },
-                                        label = { Text(profile.displayName) },
-                                        leadingIcon = if (profile.isCustom) {
-                                            {
+                                    if (!profile.isCustom) {
+                                        FilterChip(
+                                            selected = selected,
+                                            onClick = {
+                                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                onSelectDeviceProfile(activeSpace, profile)
+                                            },
+                                            label = { Text(profile.displayName) },
+                                            colors = FilterChipDefaults.filterChipColors(
+                                                selectedContainerColor = spaceAccent.container,
+                                                selectedLabelColor = spaceAccent.onContainer
+                                            ),
+                                            modifier = Modifier
+                                                .minimumInteractiveComponentSize()
+                                                .testTag("device_preset_${profile.presetKey}")
+                                        )
+                                    } else {
+                                        Surface(
+                                            shape = MaterialTheme.shapes.small,
+                                            color = if (selected) spaceAccent.container else MaterialTheme.colorScheme.surfaceContainerLow,
+                                            modifier = Modifier.border(
+                                                width = 1.dp,
+                                                color = if (selected) spaceAccent.accent else MaterialTheme.colorScheme.outlineVariant,
+                                                shape = MaterialTheme.shapes.small
+                                            )
+                                        ) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Row(
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    modifier = Modifier
+                                                        .clip(MaterialTheme.shapes.small)
+                                                        .clickable {
+                                                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                            onSelectDeviceProfile(activeSpace, profile)
+                                                        }
+                                                        .minimumInteractiveComponentSize()
+                                                        .padding(start = 12.dp, end = 6.dp)
+                                                        .testTag("device_preset_${profile.presetKey}")
+                                                ) {
+                                                    if (selected) {
+                                                        Icon(
+                                                            imageVector = Icons.Rounded.Check,
+                                                            contentDescription = null,
+                                                            tint = spaceAccent.onContainer,
+                                                            modifier = Modifier.size(16.dp)
+                                                        )
+                                                        Spacer(Modifier.width(4.dp))
+                                                    }
+                                                    Text(
+                                                        text = profile.displayName,
+                                                        style = MaterialTheme.typography.labelLarge,
+                                                        color = if (selected) spaceAccent.onContainer else MaterialTheme.colorScheme.onSurface
+                                                    )
+                                                }
                                                 IconButton(
                                                     onClick = {
                                                         editingCustomProfile = profile
                                                         showCustomProfileDialog = true
                                                     },
                                                     modifier = Modifier
-                                                        .size(18.dp)
+                                                        .size(48.dp)
                                                         .testTag("edit_custom_profile_${profile.profileId}")
                                                 ) {
                                                     Icon(
                                                         imageVector = Icons.Rounded.Edit,
-                                                        contentDescription = "Edit ${profile.displayName}",
-                                                        modifier = Modifier.size(14.dp)
+                                                        contentDescription = stringResource(R.string.cd_edit_profile_format, profile.displayName),
+                                                        tint = if (selected) spaceAccent.onContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                        modifier = Modifier.size(18.dp)
                                                     )
                                                 }
-                                            }
-                                        } else null,
-                                        trailingIcon = if (profile.isCustom) {
-                                            {
                                                 IconButton(
                                                     onClick = { onDeleteCustomProfile(activeSpace, profile.profileId) },
                                                     modifier = Modifier
-                                                        .size(18.dp)
+                                                        .size(48.dp)
                                                         .testTag("delete_custom_profile_${profile.profileId}")
                                                 ) {
                                                     Icon(
                                                         imageVector = Icons.Rounded.Close,
-                                                        contentDescription = "Delete ${profile.displayName}",
-                                                        modifier = Modifier.size(14.dp)
+                                                        contentDescription = stringResource(R.string.cd_delete_profile_format, profile.displayName),
+                                                        tint = if (selected) spaceAccent.onContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                        modifier = Modifier.size(18.dp)
                                                     )
                                                 }
                                             }
-                                        } else null,
-                                        colors = FilterChipDefaults.filterChipColors(
-                                            selectedContainerColor = spaceAccent.container,
-                                            selectedLabelColor = spaceAccent.onContainer
-                                        ),
-                                        modifier = Modifier.testTag("device_preset_${profile.presetKey}")
-                                    )
+                                        }
+                                    }
                                 }
                             }
 
@@ -236,22 +287,25 @@ fun SandboxConfigScreen(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
-                                    Text("Virtual Display DPI", style = MaterialTheme.typography.titleSmall)
+                                    Text(stringResource(R.string.virtual_display_dpi_label), style = MaterialTheme.typography.titleSmall)
                                     Text(
-                                        text = "${activeSpace.virtualDpi} dpi",
+                                        text = stringResource(R.string.dpi_value_format, dpiDraft),
                                         style = MaterialTheme.typography.labelMedium,
                                         color = spaceAccent.accent
                                     )
                                 }
                                 Slider(
-                                    value = activeSpace.virtualDpi.toFloat(),
+                                    value = dpiDraft.toFloat(),
                                     onValueChange = {
-                                        val snapped = (it / 20f).roundToInt() * 20
-                                        if (snapped != activeSpace.virtualDpi) {
-                                            onUpdateSpace(activeSpace.copy(virtualDpi = snapped))
+                                        dpiDraft = ((it / 20f).roundToInt() * 20).coerceIn(240, 640)
+                                    },
+                                    onValueChangeFinished = {
+                                        if (dpiDraft != activeSpace.virtualDpi) {
+                                            onUpdateSpace(activeSpace.copy(virtualDpi = dpiDraft))
                                         }
                                     },
-                                    valueRange = 240f..640f
+                                    valueRange = 240f..640f,
+                                    modifier = Modifier.testTag("sandbox_dpi_slider")
                                 )
                             }
                         }
@@ -272,8 +326,8 @@ fun SandboxConfigScreen(
                         ) {
                             SandboxToggleRow(
                                 icon = Icons.Rounded.Security,
-                                title = "Isolated Storage Profile",
-                                subtitle = "Separate sandbox metadata & per-instance workspace records",
+                                title = stringResource(R.string.isolated_storage_title),
+                                subtitle = stringResource(R.string.isolated_storage_subtitle),
                                 checked = activeSpace.isolatedStorage,
                                 testTag = "toggle_isolated_storage",
                                 onCheckedChange = {
@@ -283,8 +337,8 @@ fun SandboxConfigScreen(
                             )
                             SandboxToggleRow(
                                 icon = Icons.Rounded.Speed,
-                                title = "Frame-Rate Telemetry HUD",
-                                subtitle = "Display live CPU sparkline & stability telemetry on Spaces",
+                                title = stringResource(R.string.fps_hud_title),
+                                subtitle = stringResource(R.string.fps_hud_subtitle),
                                 checked = activeSpace.frameRateHud,
                                 testTag = "toggle_fps_hud",
                                 onCheckedChange = {
@@ -294,8 +348,8 @@ fun SandboxConfigScreen(
                             )
                             SandboxToggleRow(
                                 icon = Icons.Rounded.VerifiedUser,
-                                title = "Device Permission Bridge",
-                                subtitle = "Expose granted Location, Contacts & Media access to this space",
+                                title = stringResource(R.string.permission_bridge_title),
+                                subtitle = stringResource(R.string.permission_bridge_subtitle),
                                 checked = activeSpace.permissionBridgeEnabled,
                                 testTag = "toggle_permission_bridge",
                                 onCheckedChange = {
@@ -315,7 +369,7 @@ fun SandboxConfigScreen(
                             ) {
                                 Icon(Icons.Rounded.RestartAlt, contentDescription = null, modifier = Modifier.size(16.dp))
                                 Spacer(Modifier.width(6.dp))
-                                Text("Reset ${activeSpace.name} Defaults")
+                                Text(stringResource(R.string.reset_space_defaults_format, activeSpace.name))
                             }
                         }
                     }
@@ -333,7 +387,12 @@ fun SandboxConfigScreen(
                     isTelemetryPaused = uiState.isTelemetryPausedInBackground,
                     onRunIntegrityCheck = onRunIntegrityCheck,
                     onTogglePeriodicIntegrity = onTogglePeriodicIntegrity,
-                    onRefreshResources = onRefreshResources
+                    onRefreshResources = onRefreshResources,
+                    attachedVaultUris = uiState.attachedVaultUris,
+                    hasStorageFolderGrant = uiState.deviceBridge.hasStorageFolderGrant,
+                    onVaultUriPicked = onVaultUriPicked,
+                    onRemoveVaultUri = onRemoveVaultUri,
+                    onStorageTreePicked = onStorageTreePicked
                 )
             }
         }
@@ -355,172 +414,6 @@ fun SandboxConfigScreen(
             }
         )
     }
-}
-
-@Composable
-private fun CustomDeviceProfileDialog(
-    baseProfile: DeviceProfile,
-    isEditing: Boolean,
-    onSave: (DeviceProfile) -> Unit,
-    onDismiss: () -> Unit
-) {
-    var displayName by remember(baseProfile.profileId, isEditing) {
-        mutableStateOf(if (isEditing) baseProfile.displayName else "Custom Lab")
-    }
-    var manufacturer by remember(baseProfile.profileId, isEditing) { mutableStateOf(baseProfile.manufacturer) }
-    var model by remember(baseProfile.profileId, isEditing) { mutableStateOf(baseProfile.model) }
-    var brand by remember(baseProfile.profileId, isEditing) { mutableStateOf(baseProfile.brand) }
-    var device by remember(baseProfile.profileId, isEditing) { mutableStateOf(baseProfile.device) }
-    var product by remember(baseProfile.profileId, isEditing) { mutableStateOf(baseProfile.product) }
-    var board by remember(baseProfile.profileId, isEditing) { mutableStateOf(baseProfile.board) }
-    var hardware by remember(baseProfile.profileId, isEditing) { mutableStateOf(baseProfile.hardware) }
-    var androidVersion by remember(baseProfile.profileId, isEditing) { mutableStateOf(baseProfile.androidVersion) }
-    var sdkInt by remember(baseProfile.profileId, isEditing) { mutableIntStateOf(baseProfile.sdkInt.coerceIn(26, 36)) }
-    var densityDpi by remember(baseProfile.profileId, isEditing) { mutableIntStateOf(baseProfile.densityDpi.coerceIn(160, 640)) }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = {
-            Text(
-                stringResource(
-                    if (isEditing) R.string.custom_profile_edit_title
-                    else R.string.custom_profile_create_title
-                )
-            )
-        },
-        text = {
-            Column(
-                modifier = Modifier.verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                OutlinedTextField(
-                    value = displayName,
-                    onValueChange = { displayName = it },
-                    label = { Text("Preset Name") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth().testTag("custom_profile_name_input")
-                )
-                OutlinedTextField(
-                    value = manufacturer,
-                    onValueChange = { manufacturer = it },
-                    label = { Text("Manufacturer") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                OutlinedTextField(
-                    value = model,
-                    onValueChange = { model = it },
-                    label = { Text("Model") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(
-                        value = brand,
-                        onValueChange = { brand = it },
-                        label = { Text("Brand") },
-                        singleLine = true,
-                        modifier = Modifier.weight(1f)
-                    )
-                    OutlinedTextField(
-                        value = device,
-                        onValueChange = { device = it },
-                        label = { Text("Device") },
-                        singleLine = true,
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-                OutlinedTextField(
-                    value = product,
-                    onValueChange = { product = it },
-                    label = { Text("Product") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(
-                        value = board,
-                        onValueChange = { board = it },
-                        label = { Text("Board") },
-                        singleLine = true,
-                        modifier = Modifier.weight(1f)
-                    )
-                    OutlinedTextField(
-                        value = hardware,
-                        onValueChange = { hardware = it },
-                        label = { Text("Hardware") },
-                        singleLine = true,
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-                OutlinedTextField(
-                    value = androidVersion,
-                    onValueChange = { androidVersion = it },
-                    label = { Text("Android Version Label") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Column {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text("Target SDK Level", style = MaterialTheme.typography.labelLarge)
-                        Text("API $sdkInt", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-                    }
-                    Slider(
-                        value = sdkInt.toFloat(),
-                        onValueChange = { sdkInt = it.roundToInt().coerceIn(26, 36) },
-                        valueRange = 26f..36f,
-                        steps = 9
-                    )
-                }
-                Column {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text("Preset Density DPI", style = MaterialTheme.typography.labelLarge)
-                        Text("$densityDpi dpi", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-                    }
-                    Slider(
-                        value = densityDpi.toFloat(),
-                        onValueChange = { densityDpi = ((it / 20f).roundToInt() * 20).coerceIn(160, 640) },
-                        valueRange = 160f..640f
-                    )
-                }
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
-        },
-        confirmButton = {
-            Button(
-                enabled = displayName.isNotBlank() && model.isNotBlank(),
-                onClick = {
-                    val builder = DeviceProfileManager.CustomProfileBuilder(baseProfile)
-                        .displayName(displayName)
-                        .manufacturer(manufacturer)
-                        .model(model)
-                        .brand(brand)
-                        .device(device)
-                        .product(product.ifBlank { device })
-                        .board(board)
-                        .hardware(hardware)
-                        .androidVersion(androidVersion)
-                        .sdkInt(sdkInt)
-                        .densityDpi(densityDpi)
-                    if (isEditing) {
-                        builder.profileId(baseProfile.profileId)
-                    }
-                    onSave(builder.build())
-                },
-                modifier = Modifier.height(48.dp).testTag("save_custom_profile_button")
-            ) {
-                Text(if (isEditing) "Update Preset" else "Save Preset")
-            }
-        }
-    )
 }
 
 @Composable

@@ -7,7 +7,6 @@ import androidx.datastore.preferences.SharedPreferencesMigration
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
-import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
@@ -30,10 +29,6 @@ class PreferencesStore(context: Context) {
         prefs[KEY_DARK_THEME] ?: true
     }
 
-    val selectedSpaceIdFlow: Flow<Long?> = dataStore.data.map { prefs ->
-        prefs[KEY_SELECTED_SPACE_ID]?.takeIf { it > 0L }
-    }
-
     val periodicIntegrityFlow: Flow<Boolean> = dataStore.data.map { prefs ->
         prefs[KEY_PERIODIC_INTEGRITY] ?: true
     }
@@ -44,10 +39,6 @@ class PreferencesStore(context: Context) {
 
     suspend fun setDarkThemeEnabled(enabled: Boolean) {
         dataStore.edit { prefs -> prefs[KEY_DARK_THEME] = enabled }
-    }
-
-    suspend fun setSelectedSpaceId(spaceId: Long?) {
-        dataStore.edit { prefs -> prefs[KEY_SELECTED_SPACE_ID] = spaceId ?: UNSET_ID }
     }
 
     suspend fun setPeriodicIntegrityEnabled(enabled: Boolean) {
@@ -61,8 +52,6 @@ class PreferencesStore(context: Context) {
     }
 
     suspend fun getDarkThemeEnabled(): Boolean = darkThemeFlow.first()
-
-    suspend fun getSelectedSpaceId(): Long? = selectedSpaceIdFlow.first()
 
     suspend fun getPeriodicIntegrityEnabled(): Boolean = periodicIntegrityFlow.first()
 
@@ -85,9 +74,7 @@ class PreferencesStore(context: Context) {
 
     companion object {
         private val KEY_DARK_THEME = booleanPreferencesKey("dark_theme_enabled")
-        private val KEY_SELECTED_SPACE_ID = longPreferencesKey("selected_space_id")
         private val KEY_PERIODIC_INTEGRITY = booleanPreferencesKey("periodic_integrity_enabled")
         private val KEY_VAULT_URIS = stringPreferencesKey("attached_vault_uris")
-        private const val UNSET_ID = -1L
     }
 }

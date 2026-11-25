@@ -15,17 +15,8 @@ import androidx.activity.viewModels
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.ciphernodes.ciphervirtual.monitoring.ResourceMonitorSampler
-import com.ciphernodes.ciphervirtual.monitoring.ResourceMonitorService
-import com.ciphernodes.ciphervirtual.security.IntegrityCheckService
-import com.ciphernodes.ciphervirtual.security.IntegrityManager
-import com.example.data.hardware.DeviceAppScanner
-import com.example.data.hardware.DeviceBridgeManager
-import com.example.data.hardware.DeviceProfileManager
-import com.example.data.local.OctoDatabase
-import com.example.data.local.PreferencesStore
-import com.example.data.local.WorkspaceStorageManager
-import com.example.data.repository.OctoRepository
+import com.example.monitoring.ResourceMonitorService
+import com.example.security.IntegrityCheckService
 import com.example.ui.OctoViewModel
 import com.example.ui.OctoViewModelFactory
 import com.example.ui.navigation.OctoApp
@@ -34,20 +25,13 @@ import com.example.ui.theme.OctoSpaceTheme
 class MainActivity : ComponentActivity() {
 
     private val viewModel: OctoViewModel by viewModels {
-        val db = OctoDatabase.getInstance(applicationContext)
-        val scanner = DeviceAppScanner(applicationContext)
-        val bridgeManager = DeviceBridgeManager(applicationContext)
-        val workspaceStorage = WorkspaceStorageManager(applicationContext.filesDir)
-        val integrityManager = IntegrityManager(applicationContext)
-        val resourceSampler = ResourceMonitorSampler(applicationContext)
-        val preferencesStore = PreferencesStore(applicationContext)
-        val deviceProfileManager = DeviceProfileManager(applicationContext)
+        val appContainer = application as CipherVirtualApp
         OctoViewModelFactory(
-            repository = OctoRepository(db.octoDao(), scanner, bridgeManager, workspaceStorage),
-            integrityManager = integrityManager,
-            resourceSampler = resourceSampler,
-            preferencesStore = preferencesStore,
-            deviceProfileManager = deviceProfileManager,
+            repository = appContainer.repository,
+            integrityManager = appContainer.integrityManager,
+            resourceSampler = appContainer.resourceSampler,
+            preferencesStore = appContainer.preferencesStore,
+            deviceProfileManager = appContainer.deviceProfileManager,
             stringLookup = { resId, args ->
                 if (args.isEmpty()) applicationContext.getString(resId)
                 else applicationContext.getString(resId, *args)

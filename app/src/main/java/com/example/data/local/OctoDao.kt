@@ -17,9 +17,6 @@ interface OctoDao {
     @Query("SELECT * FROM virtual_spaces ORDER BY createdAt ASC")
     suspend fun getAllSpacesSnapshot(): List<VirtualSpaceEntity>
 
-    @Query("SELECT COUNT(*) FROM virtual_spaces")
-    suspend fun getSpaceCount(): Int
-
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertSpace(space: VirtualSpaceEntity): Long
 
@@ -37,6 +34,9 @@ interface OctoDao {
 
     @Query("SELECT * FROM virtual_apps ORDER BY addedAt DESC")
     fun observeAllApps(): Flow<List<VirtualAppEntity>>
+
+    @Query("SELECT * FROM virtual_apps ORDER BY addedAt DESC")
+    suspend fun getAllAppsSnapshot(): List<VirtualAppEntity>
 
     @Query("SELECT COUNT(*) FROM virtual_apps WHERE spaceId = :spaceId AND packageName = :packageName")
     suspend fun countPackageInSpace(spaceId: Long, packageName: String): Int

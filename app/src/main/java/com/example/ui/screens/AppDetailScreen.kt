@@ -59,6 +59,7 @@ import com.example.ui.OctoUiState
 import com.example.ui.components.AppIconBadge
 import com.example.ui.components.TelemetryPill
 import com.example.ui.theme.spaceAccentColors
+import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -88,9 +89,14 @@ fun AppDetailScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
                 modifier = Modifier.padding(24.dp)
             ) {
-                Text("Instance not found", style = MaterialTheme.typography.titleLarge)
-                FilledTonalButton(onClick = onBack, modifier = Modifier.height(48.dp)) {
-                    Text("Back to Spaces")
+                Text(stringResource(R.string.instance_not_found), style = MaterialTheme.typography.titleLarge)
+                FilledTonalButton(
+                    onClick = onBack,
+                    modifier = Modifier
+                        .height(48.dp)
+                        .testTag("app_detail_not_found_back_button")
+                ) {
+                    Text(stringResource(R.string.back_to_spaces))
                 }
             }
         }
@@ -104,9 +110,28 @@ fun AppDetailScreen(
     val workspaceStats: InstanceWorkspaceStats? = uiState.inspectedWorkspaceStats
     val workProfileSupported = remember(app.packageName) { hasWorkProfileTarget(app.packageName) }
     var preferWorkProfile by remember(app.id) { mutableStateOf(false) }
-    var labelDraft by remember(app.id, app.instanceLabel) { mutableStateOf(app.instanceLabel) }
-    var notesDraft by remember(app.id, app.notes) { mutableStateOf(app.notes) }
+    var labelDraft by remember(app.id) { mutableStateOf(app.instanceLabel) }
+    var notesDraft by remember(app.id) { mutableStateOf(app.notes) }
     val dateFormatter = remember { SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()) }
+
+    fun flushDrafts(): VirtualAppEntity {
+        val nextLabel = labelDraft.trim().takeIf { it.isNotBlank() } ?: app.instanceLabel
+        val nextNotes = notesDraft
+        return if (nextLabel != app.instanceLabel || nextNotes != app.notes) {
+            app.copy(instanceLabel = nextLabel, notes = nextNotes).also(onUpdateApp)
+        } else {
+            app
+        }
+    }
+
+    LaunchedEffect(app.id, labelDraft, notesDraft) {
+        val nextLabel = labelDraft.trim().takeIf { it.isNotBlank() } ?: app.instanceLabel
+        val nextNotes = notesDraft
+        if (nextLabel != app.instanceLabel || nextNotes != app.notes) {
+            delay(350L)
+            onUpdateApp(app.copy(instanceLabel = nextLabel, notes = nextNotes))
+        }
+    }
 
     LaunchedEffect(app.spaceId, app.id) {
         onInspectWorkspace(app.spaceId, app.id)
@@ -130,14 +155,17 @@ fun AppDetailScreen(
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     IconButton(
-                        onClick = onBack,
+                        onClick = {
+                            flushDrafts()
+                            onBack()
+                        },
                         modifier = Modifier
                             .minimumInteractiveComponentSize()
                             .testTag("app_detail_back_button")
                     ) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
-                            contentDescription = "Back"
+                            contentDescription = stringResource(R.string.cd_back)
                         )
                     }
                     Column(modifier = Modifier.weight(1f)) {
@@ -146,7 +174,11 @@ fun AppDetailScreen(
                             style = MaterialTheme.typography.headlineMedium
                         )
                         Text(
-                            text = "${space?.name ?: "Space"} • ${app.instanceLabel}",
+                            text = stringResource(
+                                R.string.detail_subtitle_format,
+                                space?.name ?: stringResource(R.string.space_fallback_name),
+                                app.instanceLabel
+                            ),
                             style = MaterialTheme.typography.bodySmall,
                             color = spaceAccent.accent
                         )
@@ -192,30 +224,37 @@ fun AppDetailScreen(
                                 )
                             }
                             TelemetryPill(
-                                label = "${app.launchCount} launches",
+                                label = stringResource(R.string.launches_count_format, app.launchCount),
                                 containerColor = spaceAccent.container,
                                 contentColor = spaceAccent.onContainer
                             )
                         }
 
                         installedMeta?.let { meta ->
-                            DetailInfoRow("Version", "v${meta.versionName}")
-                            DetailInfoRow("Target SDK", "API ${meta.targetSdk}")
+                            DetailInfoRow(
+                                stringResource(R.string.detail_version_label),
+                                stringResource(R.string.detail_version_value_format, meta.versionName)
+                            )
+                            DetailInfoRow(
+                                stringResource(R.string.detail_target_sdk_label),
+                                stringResource(R.string.detail_target_sdk_value_format, meta.targetSdk)
+                            )
                             if (meta.apkSizeMb >= 0.1f) {
                                 DetailInfoRow(
-                                    "APK Size",
-                                    String.format(Locale.US, "%.1f MB", meta.apkSizeMb)
+                                    stringResource(R.string.detail_apk_size_label),
+                                    stringResource(R.string.detail_apk_size_value_format, meta.apkSizeMb)
                                 )
                             }
                         }
-                        DetailInfoRow("Added", dateFormatter.format(Date(app.addedAt)))
+                        DetailInfoRow(stringResource(R.string.detail_added_label), dateFormatter.format(Date(app.addedAt)))
                         DetailInfoRow(
-                            "Last Launched",
-                            app.lastLaunchedAt?.let { dateFormatter.format(Date(it)) } ?: "Never"
+                            stringResource(R.string.detail_last_launched_label),
+                            app.lastLaunchedAt?.let { dateFormatter.format(Date(it)) }
+                                ?: stringResource(R.string.detail_never)
                         )
                         DetailInfoRow(
-                            "Last Profile ID",
-                            app.lastProfileId?.take(8) ?: "None recorded"
+                            stringResource(R.string.detail_last_profile_id_label),
+                            app.lastProfileId?.take(8) ?: stringResource(R.string.detail_none_recorded)
                         )
                     }
                 }
@@ -238,16 +277,25 @@ fun AppDetailScreen(
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             Icon(Icons.Rounded.DeveloperBoard, contentDescription = null, tint = spaceAccent.accent)
-                            Text("Assigned Environment & Device Profile", style = MaterialTheme.typography.titleMedium)
+                            Text(stringResource(R.string.assigned_env_profile_title), style = MaterialTheme.typography.titleMedium)
                         }
-                        DetailInfoRow("Workspace", "${space?.name ?: "Default"} (${space?.tag ?: "SPACE"})")
-                        DetailInfoRow("Preset", space?.deviceModelPreset ?: "ROG Phone 8 Pro")
-                        DetailInfoRow("Virtual DPI", "${space?.virtualDpi ?: 440} dpi")
+                        DetailInfoRow(
+                            stringResource(R.string.detail_workspace_label),
+                            "${space?.name ?: stringResource(R.string.space_fallback_name)} (${space?.tag ?: "MAIN"})"
+                        )
+                        DetailInfoRow(stringResource(R.string.detail_preset_label), space?.deviceModelPreset ?: "ROG Phone 8 Pro")
+                        DetailInfoRow(
+                            stringResource(R.string.detail_virtual_dpi_label),
+                            stringResource(R.string.dpi_value_format, space?.virtualDpi ?: 440)
+                        )
                         activeProfile?.let { profile ->
-                            DetailInfoRow("Model", "${profile.manufacturer} ${profile.model}")
-                            DetailInfoRow("Product / Device", "${profile.product} / ${profile.device}")
-                            DetailInfoRow("Board / Hardware", "${profile.board} / ${profile.hardware}")
-                            DetailInfoRow("Android OS", "Android ${profile.androidVersion} (API ${profile.sdkInt})")
+                            DetailInfoRow(stringResource(R.string.detail_model_label), "${profile.manufacturer} ${profile.model}")
+                            DetailInfoRow(stringResource(R.string.detail_product_device_label), "${profile.product} / ${profile.device}")
+                            DetailInfoRow(stringResource(R.string.detail_board_hardware_label), "${profile.board} / ${profile.hardware}")
+                            DetailInfoRow(
+                                stringResource(R.string.detail_android_os_label),
+                                stringResource(R.string.android_os_value_format, profile.androidVersion, profile.sdkInt)
+                            )
                         }
                     }
                 }
@@ -265,29 +313,24 @@ fun AppDetailScreen(
                         modifier = Modifier.padding(16.dp),
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        Text("Instance Configuration", style = MaterialTheme.typography.titleMedium)
+                        Text(stringResource(R.string.instance_config_title), style = MaterialTheme.typography.titleMedium)
                         OutlinedTextField(
                             value = labelDraft,
-                            onValueChange = { updated ->
-                                val clean = updated.take(24)
-                                labelDraft = clean
-                                if (clean.isNotBlank()) {
-                                    onUpdateApp(app.copy(instanceLabel = clean.trim()))
-                                }
-                            },
-                            label = { Text("Instance Label") },
+                            onValueChange = { updated -> labelDraft = updated.take(24) },
+                            label = { Text(stringResource(R.string.instance_label_field)) },
                             singleLine = true,
-                            modifier = Modifier.fillMaxWidth().testTag("detail_instance_label_input")
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("detail_instance_label_input")
                         )
                         OutlinedTextField(
                             value = notesDraft,
-                            onValueChange = { updated ->
-                                notesDraft = updated.take(180)
-                                onUpdateApp(app.copy(notes = notesDraft))
-                            },
-                            label = { Text("Instance Notes (Account / Test Tag)") },
+                            onValueChange = { updated -> notesDraft = updated.take(180) },
+                            label = { Text(stringResource(R.string.instance_notes_field)) },
                             maxLines = 3,
-                            modifier = Modifier.fillMaxWidth().testTag("detail_instance_notes_input")
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("detail_instance_notes_input")
                         )
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -296,7 +339,10 @@ fun AppDetailScreen(
                             listOf("Balanced", "Turbo", "Battery").forEach { mode ->
                                 FilterChip(
                                     selected = app.performanceMode == mode,
-                                    onClick = { onUpdateApp(app.copy(performanceMode = mode)) },
+                                    onClick = {
+                                        val synced = flushDrafts()
+                                        onUpdateApp(synced.copy(performanceMode = mode))
+                                    },
                                     label = { Text(mode) },
                                     leadingIcon = if (app.performanceMode == mode) {
                                         { Icon(Icons.Rounded.Bolt, contentDescription = null, modifier = Modifier.size(14.dp)) }
@@ -304,7 +350,8 @@ fun AppDetailScreen(
                                     colors = FilterChipDefaults.filterChipColors(
                                         selectedContainerColor = spaceAccent.container,
                                         selectedLabelColor = spaceAccent.onContainer
-                                    )
+                                    ),
+                                    modifier = Modifier.testTag("detail_perf_mode_${mode.lowercase(Locale.US)}")
                                 )
                             }
                         }
@@ -314,10 +361,11 @@ fun AppDetailScreen(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
-                                Text("Prefer Work / Managed Profile", style = MaterialTheme.typography.bodyMedium)
+                                Text(stringResource(R.string.prefer_work_profile_label), style = MaterialTheme.typography.bodyMedium)
                                 Switch(
                                     checked = preferWorkProfile,
-                                    onCheckedChange = { preferWorkProfile = it }
+                                    onCheckedChange = { preferWorkProfile = it },
+                                    modifier = Modifier.testTag("detail_work_profile_switch")
                                 )
                             }
                         }
@@ -342,21 +390,29 @@ fun AppDetailScreen(
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             Icon(Icons.Rounded.Storage, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                            Text("Isolated Workspace Storage", style = MaterialTheme.typography.titleMedium)
+                            Text(stringResource(R.string.isolated_workspace_storage_title), style = MaterialTheme.typography.titleMedium)
                         }
                         DetailInfoRow(
-                            "Files Recorded",
-                            "${workspaceStats?.fileCount ?: 0} file(s) • ${workspaceStats?.sizeBytes ?: 0L} bytes"
+                            stringResource(R.string.worker_slot_label),
+                            uiState.inspectedWorkerSlot ?: stringResource(R.string.worker_slot_pending)
+                        )
+                        DetailInfoRow(
+                            stringResource(R.string.files_recorded_label),
+                            stringResource(
+                                R.string.files_recorded_format,
+                                workspaceStats?.fileCount ?: 0,
+                                workspaceStats?.sizeBytes ?: 0L
+                            )
                         )
                         Text(
-                            text = workspaceStats?.directoryPath ?: "Not initialized yet",
+                            text = workspaceStats?.directoryPath ?: stringResource(R.string.workspace_not_initialized),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis
                         )
                         FilledTonalButton(
-                            onClick = { onResetWorkspace(app) },
+                            onClick = { onResetWorkspace(flushDrafts()) },
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(48.dp)
@@ -376,31 +432,39 @@ fun AppDetailScreen(
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     FilledTonalButton(
-                        onClick = { onCloneApp(app) },
-                        modifier = Modifier.weight(1f).height(48.dp)
+                        onClick = { onCloneApp(flushDrafts()) },
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(48.dp)
+                            .testTag("detail_clone_button")
                     ) {
                         Icon(Icons.Rounded.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(4.dp))
-                        Text("Clone")
+                        Text(stringResource(R.string.clone_action))
                     }
                     FilledTonalButton(
                         onClick = {
                             onRemoveApp(app)
                             onBack()
                         },
-                        modifier = Modifier.height(48.dp)
+                        modifier = Modifier
+                            .height(48.dp)
+                            .testTag("detail_remove_button")
                     ) {
                         Icon(Icons.Rounded.DeleteOutline, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(4.dp))
-                        Text("Remove")
+                        Text(stringResource(R.string.remove_action))
                     }
                     Button(
-                        onClick = { onLaunchApp(app, preferWorkProfile) },
+                        onClick = { onLaunchApp(flushDrafts(), preferWorkProfile) },
                         colors = ButtonDefaults.buttonColors(
                             containerColor = spaceAccent.accent,
                             contentColor = MaterialTheme.colorScheme.onPrimary
                         ),
-                        modifier = Modifier.weight(1f).height(48.dp)
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(48.dp)
+                            .testTag("detail_launch_button")
                     ) {
                         Icon(Icons.Rounded.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(4.dp))

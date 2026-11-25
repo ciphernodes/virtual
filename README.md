@@ -1,17 +1,19 @@
 # Cipher Virtual
 
-**Cipher Virtual** is an Android application built with Kotlin and Jetpack Compose for organizing installed apps in a unified virtual workspace, customizing device hardware profiles, monitoring system resources, and checking Play Integrity status.
+**Cipher Virtual** is an advanced Android application built with Kotlin and Jetpack Compose for organizing installed apps in unified virtual workspaces, managing fully isolated multi-instance application environments with dedicated storage and worker process slots, configuring custom hardware profiles, monitoring live system telemetry, and verifying Play Integrity status.
 
 ---
 
-## Features
+## Core Architecture & Features
 
-- **Unified Virtual Workspace:** Import installed apps and games into a single workspace, manage multiple app instances with custom labels and notes, track launch counts, and launch via standard or work profiles when available.
-- **Hardware Profile Studio:** Switch between built-in device presets or create custom hardware profiles with configurable model details, SDK level, and virtual DPI.
-- **Resource Monitoring:** Real-time tracking for device RAM, JVM/native heap usage, CPU load, battery state, and thermal status while the app is active in the foreground.
-- **Play Integrity Check:** Supports standard Play Integrity token requests, periodic background checks, and optional server-side token verification.
-- **Automatic Permission Prompting:** Checks for missing required device and system permissions on launch and resume, prompting the user directly and closing the app if declined.
-- **Adaptive Material 3 UI:** Supports phones, foldables, and tablets with dark/light theme toggling.
+- **Multi-Instance Virtual Workspace (`WorkspaceStorageManager` & `WorkspaceManager`):** Creates and manages isolated per-instance directories under internal/external storage (`files/workspaces/<instanceId>/{data,cache,databases,shared_prefs}`), ensuring independent local state without collisions. Persistence is backed by Room entities and atomic SharedPreferences wrappers.
+- **Worker Process Routing (`WorkspaceProcessRouter`):** Maps instances to dedicated worker process slots (`:w0` through `:w7`) and resolves active instance contexts with strict path isolation and legacy session migration support.
+- **Hardware Profile Studio:** Switch between built-in device presets (e.g., ROG Phone 8 Pro, Pixel 8, Galaxy S24 Ultra) or author custom hardware profiles with configurable model details, SDK levels, and virtual DPI sliders.
+- **App Discovery & Cloning (`DeviceAppScanner`):** Fast, synchronized device app scanning with bounded-parallel icon decoding and aspect-ratio preservation.
+- **Resource Monitoring (`ResourceMonitorService` & `ResourceMonitorSampler`):** Real-time tracking for device RAM, JVM/native heap usage, CPU load, battery state, and thermal status offloaded to `Dispatchers.Default`.
+- **Play Integrity & Security (`IntegrityManager`):** Standard Play Integrity token requests, periodic background checks, and optional HTTPS backend token verification.
+- **Virtual Vault & SAF Storage (`VirtualVaultCard`):** Zero-permission Photo Picker media attachment and Storage Access Framework (SAF) directory export permission grants.
+- **Adaptive Material 3 UI:** Fluid support for phones, foldables, and tablets with responsive layouts, NavigationBar/NavigationRail breakpoints, debounced database writes, and accessibility touch targets (>= 48.dp).
 
 ---
 
@@ -19,7 +21,7 @@
 
 - **Language & UI:** Kotlin, Jetpack Compose, Material 3, Navigation Compose
 - **Architecture:** MVVM + Repository pattern with Kotlin Coroutines and `StateFlow`
-- **Persistence:** Room (SQLite), Jetpack DataStore, and `SharedPreferences`
+- **Persistence:** Room (SQLite) with schema export v1–v5, Jetpack DataStore, and thread-safe XML `SharedPreferences`
 - **Security & Optimization:** Google Play Integrity API, R8 code & resource shrinking
 - **Testing:** JUnit 4, Robolectric, and Compose UI Test
 

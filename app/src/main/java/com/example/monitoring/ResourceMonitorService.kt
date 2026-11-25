@@ -1,4 +1,4 @@
-package com.ciphernodes.ciphervirtual.monitoring
+package com.example.monitoring
 
 import android.app.ActivityManager
 import android.app.Service
@@ -15,6 +15,7 @@ import android.os.PowerManager
 import android.os.Process
 import android.os.StatFs
 import android.os.SystemClock
+import com.example.CipherVirtualApp
 import com.example.data.model.VirtualAppEntity
 import com.example.data.model.VirtualSpaceEntity
 import kotlinx.coroutines.CoroutineScope
@@ -256,7 +257,8 @@ class ResourceMonitorService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        sampler = ResourceMonitorSampler(applicationContext)
+        sampler = (application as? CipherVirtualApp)?.resourceSampler
+            ?: ResourceMonitorSampler(applicationContext)
         sampleNow()
     }
 
@@ -308,9 +310,9 @@ class ResourceMonitorService : Service() {
     }
 
     companion object {
-        const val ACTION_START_MONITORING = "com.ciphernodes.ciphervirtual.action.START_RESOURCE_MONITOR"
-        const val ACTION_STOP_MONITORING = "com.ciphernodes.ciphervirtual.action.STOP_RESOURCE_MONITOR"
-        const val ACTION_SAMPLE_NOW = "com.ciphernodes.ciphervirtual.action.SAMPLE_RESOURCES"
+        const val ACTION_START_MONITORING = "com.cipher.virtual.action.START_RESOURCE_MONITOR"
+        const val ACTION_STOP_MONITORING = "com.cipher.virtual.action.STOP_RESOURCE_MONITOR"
+        const val ACTION_SAMPLE_NOW = "com.cipher.virtual.action.SAMPLE_RESOURCES"
         private const val DEFAULT_SAMPLE_INTERVAL_MS = 2500L
     }
 }

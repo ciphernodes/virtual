@@ -10,10 +10,34 @@ import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+
+data class NeomorphicColors(
+    val lightShadow: Color,
+    val darkShadow: Color
+)
+
+val LocalNeomorphicColors = compositionLocalOf {
+    NeomorphicColors(
+        lightShadow = Color.White,
+        darkShadow = Color(0xFFB8C4D9)
+    )
+}
+
+private val NeomorphicLightColors = NeomorphicColors(
+    lightShadow = Color.White,
+    darkShadow = Color(0xFFB8C4D9)
+)
+
+private val NeomorphicDarkColors = NeomorphicColors(
+    lightShadow = Color(0xFF222B3D),
+    darkShadow = Color(0xFF080B10)
+)
 
 private val OctoDarkColorScheme = darkColorScheme(
     primary = CyanPrimary,
@@ -28,16 +52,16 @@ private val OctoDarkColorScheme = darkColorScheme(
     onTertiary = OnMintTertiary,
     tertiaryContainer = MintContainer,
     onTertiaryContainer = OnMintContainer,
-    background = AbyssalBackground,
+    background = Color(0xFF131720),
     onBackground = DarkOnSurface,
-    surface = AbyssalSurface,
+    surface = Color(0xFF131720),
     onSurface = DarkOnSurface,
-    surfaceVariant = AbyssalSurfaceVariant,
+    surfaceVariant = Color(0xFF1B2230),
     onSurfaceVariant = DarkOnSurfaceVariant,
-    surfaceContainerLowest = AbyssalBackground,
-    surfaceContainerLow = AbyssalSurface,
-    surfaceContainer = AbyssalSurfaceVariant,
-    surfaceContainerHigh = AbyssalSurfaceHighest,
+    surfaceContainerLowest = Color(0xFF0D1017),
+    surfaceContainerLow = Color(0xFF131720),
+    surfaceContainer = Color(0xFF1B2230),
+    surfaceContainerHigh = Color(0xFF242E42),
     outline = DarkOutline,
     outlineVariant = DarkOutlineVariant,
     error = ErrorRed,
@@ -59,18 +83,18 @@ private val OctoLightColorScheme = lightColorScheme(
     onTertiary = Color.White,
     tertiaryContainer = LightMintContainer,
     onTertiaryContainer = Color(0xFF022C22),
-    background = LightBackground,
+    background = Color(0xFFE4EBF5),
     onBackground = LightOnSurface,
-    surface = LightSurface,
+    surface = Color(0xFFE4EBF5),
     onSurface = LightOnSurface,
-    surfaceVariant = LightSurfaceVariant,
+    surfaceVariant = Color(0xFFD6E0F0),
     onSurfaceVariant = LightOnSurfaceVariant,
     surfaceContainerLowest = Color(0xFFFFFFFF),
-    surfaceContainerLow = Color(0xFFF8FAFC),
-    surfaceContainer = LightSurfaceVariant,
-    surfaceContainerHigh = Color(0xFFDCE5F0),
+    surfaceContainerLow = Color(0xFFE4EBF5),
+    surfaceContainer = Color(0xFFD6E0F0),
+    surfaceContainerHigh = Color(0xFFC5D4EC),
     outline = LightOutline,
-    outlineVariant = Color(0xFFE2E8F0),
+    outlineVariant = Color(0xFFCBD5E1),
     error = Color(0xFFDC2626),
     onError = Color.White,
     errorContainer = Color(0xFFFEE2E2),
@@ -138,10 +162,14 @@ fun OctoSpaceTheme(
         else -> OctoLightColorScheme
     }
 
-    MaterialTheme(
-        colorScheme = colorScheme,
-        typography = OctoTypography,
-        shapes = OctoShapes,
-        content = content
-    )
+    val neomorphicColors = if (darkTheme) NeomorphicDarkColors else NeomorphicLightColors
+
+    CompositionLocalProvider(LocalNeomorphicColors provides neomorphicColors) {
+        MaterialTheme(
+            colorScheme = colorScheme,
+            typography = OctoTypography,
+            shapes = OctoShapes,
+            content = content
+        )
+    }
 }

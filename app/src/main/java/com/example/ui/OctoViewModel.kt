@@ -5,12 +5,6 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
-import com.ciphernodes.ciphervirtual.monitoring.ResourceMonitorSampler
-import com.ciphernodes.ciphervirtual.monitoring.ResourceMonitorService
-import com.ciphernodes.ciphervirtual.monitoring.ResourceTelemetrySnapshot
-import com.ciphernodes.ciphervirtual.security.IntegrityCheckService
-import com.ciphernodes.ciphervirtual.security.IntegrityManager
-import com.ciphernodes.ciphervirtual.security.IntegrityStatusSnapshot
 import com.example.R
 import com.example.data.hardware.DeviceProfile
 import com.example.data.hardware.DeviceProfileManager
@@ -22,6 +16,13 @@ import com.example.data.model.InstalledAppInfo
 import com.example.data.model.VirtualAppEntity
 import com.example.data.model.VirtualSpaceEntity
 import com.example.data.repository.OctoRepository
+import com.example.monitoring.ResourceMonitorSampler
+import com.example.monitoring.ResourceMonitorService
+import com.example.monitoring.ResourceTelemetrySnapshot
+import com.example.security.IntegrityCheckService
+import com.example.security.IntegrityManager
+import com.example.security.IntegrityStatusSnapshot
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -36,6 +37,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 data class OctoUiState(
     val spaces: List<VirtualSpaceEntity> = emptyList(),
@@ -55,6 +57,7 @@ data class OctoUiState(
     val activeDeviceProfile: DeviceProfile? = null,
     val availableDeviceProfiles: List<DeviceProfile> = DeviceProfileManager.availablePresets(),
     val inspectedWorkspaceStats: InstanceWorkspaceStats? = null,
+    val inspectedWorkerSlot: String? = null,
     val isTelemetryPausedInBackground: Boolean = false
 ) {
     val activeSpace: VirtualSpaceEntity?
@@ -71,7 +74,6 @@ class OctoViewModel(
     private val stringLookup: ((Int, Array<out Any>) -> String)? = null
 ) : ViewModel() {
 
-    private val selectedSpaceIdFlow = MutableStateFlow<Long?>(null)
     private val installedAppsFlow = MutableStateFlow<List<InstalledAppInfo>>(emptyList())
     private val isScanningAppsFlow = MutableStateFlow(false)
     private val appIconsFlow = MutableStateFlow<Map<String, ImageBitmap>>(emptyMap())
@@ -88,6 +90,7 @@ class OctoViewModel(
         deviceProfileManager?.getAvailableProfiles() ?: DeviceProfileManager.availablePresets()
     )
     private val inspectedWorkspaceStatsFlow = MutableStateFlow<InstanceWorkspaceStats?>(null)
+    private val inspectedWorkerSlotFlow = MutableStateFlow<String?>(null)
     private val isForegroundActiveFlow = MutableStateFlow(true)
 
     private var boundIntegrityService: IntegrityCheckService? = null
@@ -96,27 +99,20 @@ class OctoViewModel(
     private var resourceCollectorJob: Job? = null
     private var fallbackTelemetryJob: Job? = null
 
-    private val appsInSpaceFlow = combine(
-        repository.spaces,
-        selectedSpaceIdFlow
-    ) { spaces, selectedId ->
-        selectedId?.takeIf { id -> spaces.any { it.id == id } } ?: spaces.firstOrNull()?.id
-    }.flatMapLatest { resolvedSpaceId ->
-        if (resolvedSpaceId == null) flowOf(emptyList())
-        else repository.observeAppsForSpace(resolvedSpaceId)
+    private val appsInSpaceFlow = repository.spaces.flatMapLatest { spaces ->
+        val primarySpaceId = spaces.firstOrNull()?.id
+        if (primarySpaceId == null) flowOf(emptyList())
+        else repository.observeAppsForSpace(primarySpaceId)
     }
 
     private val coreDataFlow = combine(
         repository.spaces,
-        selectedSpaceIdFlow,
         appsInSpaceFlow,
         repository.allVirtualApps
-    ) { spaces, selectedSpaceId, appsInSpace, allApps ->
-        val validSelection = selectedSpaceId?.takeIf { id -> spaces.any { it.id == id } }
-            ?: spaces.firstOrNull()?.id
+    ) { spaces, appsInSpace, allApps ->
         CoreData(
             spaces = spaces,
-            selectedSpaceId = validSelection,
+            selectedSpaceId = spaces.firstOrNull()?.id,
             appsInSpace = appsInSpace,
             allApps = allApps
         )
@@ -127,25 +123,17 @@ class OctoViewModel(
         isScanningAppsFlow,
         appIconsFlow
     ) { installed, isScanning, icons ->
-        ScannerData(
-            installedApps = installed,
-            isScanning = isScanning,
-            appIcons = icons
-        )
+        ScannerData(installedApps = installed, isScanning = isScanning, appIcons = icons)
     }
 
     private val bridgeDataFlow = combine(
         deviceBridgeFlow,
         attachedVaultUrisFlow,
         inspectedWorkspaceStatsFlow,
+        inspectedWorkerSlotFlow,
         isForegroundActiveFlow
-    ) { bridge, uris, stats, foreground ->
-        BridgeData(
-            deviceBridge = bridge,
-            attachedVaultUris = uris,
-            inspectedWorkspaceStats = stats,
-            isForegroundActive = foreground
-        )
+    ) { bridge, uris, stats, workerSlot, foreground ->
+        BridgeData(bridge, uris, stats, workerSlot, foreground)
     }
 
     private val uiFlagsFlow = combine(
@@ -155,13 +143,7 @@ class OctoViewModel(
         integrityStatusFlow,
         resourceTelemetryFlow
     ) { launchApp, darkTheme, statusMsg, integrity, telemetry ->
-        UiFlagsData(
-            launchSessionApp = launchApp,
-            darkThemeEnabled = darkTheme,
-            statusMessage = statusMsg,
-            integrityStatus = integrity,
-            resourceTelemetry = telemetry
-        )
+        UiFlagsData(launchApp, darkTheme, statusMsg, integrity, telemetry)
     }
 
     val uiState: StateFlow<OctoUiState> = combine(
@@ -189,6 +171,7 @@ class OctoViewModel(
             activeDeviceProfile = activeProfile,
             availableDeviceProfiles = allProfiles,
             inspectedWorkspaceStats = bridge.inspectedWorkspaceStats,
+            inspectedWorkerSlot = bridge.inspectedWorkerSlot,
             isTelemetryPausedInBackground = !bridge.isForegroundActive
         )
     }.stateIn(
@@ -199,35 +182,20 @@ class OctoViewModel(
 
     init {
         preferencesStore?.let { store ->
-            viewModelScope.launch {
-                store.darkThemeFlow.distinctUntilChanged().collect { darkThemeFlow.value = it }
-            }
-            viewModelScope.launch {
-                store.selectedSpaceIdFlow.distinctUntilChanged().collect { savedId ->
-                    if (savedId != null && selectedSpaceIdFlow.value == null) {
-                        selectedSpaceIdFlow.value = savedId
-                        activeDeviceProfileFlow.value =
-                            deviceProfileManager?.getActiveProfile(savedId) ?: DeviceProfileManager.rogPhone8Pro()
-                    }
-                }
-            }
+            viewModelScope.launch { store.darkThemeFlow.distinctUntilChanged().collect { darkThemeFlow.value = it } }
             viewModelScope.launch {
                 store.periodicIntegrityFlow.distinctUntilChanged().collect { enabled ->
                     periodicIntegrityEnabledFlow.value = enabled
                     integrityStatusFlow.update { it.copy(isPeriodicEnabled = enabled) }
                 }
             }
-            viewModelScope.launch {
-                store.attachedVaultUrisFlow.collect { attachedVaultUrisFlow.value = it }
-            }
+            viewModelScope.launch { store.attachedVaultUrisFlow.collect { attachedVaultUrisFlow.value = it } }
         }
 
         viewModelScope.launch {
             integrityManager.status.collect { snapshot ->
                 if (boundIntegrityService == null) {
-                    integrityStatusFlow.value = snapshot.copy(
-                        isPeriodicEnabled = periodicIntegrityEnabledFlow.value
-                    )
+                    integrityStatusFlow.value = snapshot.copy(isPeriodicEnabled = periodicIntegrityEnabledFlow.value)
                 }
             }
         }
@@ -240,28 +208,26 @@ class OctoViewModel(
         }
 
         viewModelScope.launch {
-            combine(repository.spaces, repository.allVirtualApps) { spaces, apps ->
-                spaces to apps
-            }.collect { (spaces, apps) ->
-                val active = selectedSpaceIdFlow.value?.let { id -> spaces.firstOrNull { it.id == id } }
-                    ?: spaces.firstOrNull()
-                if (active != null && deviceProfileManager != null) {
-                    activeDeviceProfileFlow.value =
-                        deviceProfileManager.resolveForPresetName(active.deviceModelPreset, active.id)
+            combine(repository.spaces, repository.allVirtualApps) { spaces, apps -> spaces to apps }
+                .collect { (spaces, apps) ->
+                    val active = spaces.firstOrNull()
+                    if (active != null && deviceProfileManager != null) {
+                        activeDeviceProfileFlow.value =
+                            deviceProfileManager.resolveForPresetName(active.deviceModelPreset, active.id)
+                    }
+                    val boundRes = boundResourceService
+                    if (boundRes != null) {
+                        withContext(Dispatchers.Default) { boundRes.updateTrackedContainers(spaces, apps) }
+                    } else {
+                        resourceTelemetryFlow.value =
+                            withContext(Dispatchers.Default) { resourceSampler.captureSnapshot(spaces, apps) }
+                    }
                 }
-                val boundRes = boundResourceService
-                if (boundRes != null) {
-                    boundRes.updateTrackedContainers(spaces, apps)
-                } else {
-                    resourceTelemetryFlow.value = resourceSampler.captureSnapshot(spaces, apps)
-                }
-            }
         }
 
         viewModelScope.launch {
             repository.allVirtualApps.collect { apps ->
-                val missing = apps.map { it.packageName }.distinct()
-                    .filter { !appIconsFlow.value.containsKey(it) }
+                val missing = apps.map { it.packageName }.distinct().filter { !appIconsFlow.value.containsKey(it) }
                 if (missing.isNotEmpty()) {
                     val newIcons = repository.loadAppIcons(missing)
                     if (newIcons.isNotEmpty()) {
@@ -278,11 +244,7 @@ class OctoViewModel(
         isForegroundActiveFlow.value = active
         val resourceService = boundResourceService
         if (resourceService != null) {
-            if (active) {
-                resourceService.startMonitoring()
-            } else {
-                resourceService.stopMonitoring()
-            }
+            if (active) resourceService.startMonitoring() else resourceService.stopMonitoring()
         } else {
             restartFallbackPollingIfNeeded()
         }
@@ -304,59 +266,8 @@ class OctoViewModel(
         }
     }
 
-    fun selectSpace(spaceId: Long) {
-        selectedSpaceIdFlow.value = spaceId
-        viewModelScope.launch { preferencesStore?.setSelectedSpaceId(spaceId) }
-        val space = uiState.value.spaces.firstOrNull { it.id == spaceId }
-        if (space != null && deviceProfileManager != null) {
-            activeDeviceProfileFlow.value =
-                deviceProfileManager.resolveForPresetName(space.deviceModelPreset, space.id)
-        }
-    }
-
-    fun createSpace(name: String, tag: String, accentIndex: Int) {
-        if (name.isBlank()) return
-        val trimmed = name.trim()
-        viewModelScope.launch {
-            val newId = repository.createSpace(trimmed, tag, accentIndex)
-            val defaultPreset = DeviceProfileManager.rogPhone8Pro()
-            deviceProfileManager?.selectPreset(defaultPreset.presetKey, newId)?.let {
-                activeDeviceProfileFlow.value = it
-            }
-            selectedSpaceIdFlow.value = newId
-            preferencesStore?.setSelectedSpaceId(newId)
-            statusMessageFlow.value = formatText(
-                R.string.status_space_created,
-                "Space \"$trimmed\" initialized",
-                trimmed
-            )
-        }
-    }
-
-    fun editSpace(space: VirtualSpaceEntity, name: String, tag: String, accentIndex: Int) {
-        val trimmedName = name.trim()
-        if (trimmedName.isEmpty()) return
-        val normalizedTag = tag.trim().uppercase().take(6).ifEmpty { "SPACE" }
-        viewModelScope.launch {
-            repository.updateSpace(
-                space.copy(
-                    name = trimmedName,
-                    tag = normalizedTag,
-                    accentIndex = accentIndex
-                )
-            )
-            statusMessageFlow.value = formatText(
-                R.string.status_space_updated,
-                "Updated space \"$trimmedName\"",
-                trimmedName
-            )
-        }
-    }
-
     fun updateSpace(space: VirtualSpaceEntity) {
-        viewModelScope.launch {
-            repository.updateSpace(space)
-        }
+        viewModelScope.launch { repository.updateSpace(space) }
     }
 
     fun resetSpaceDefaults(space: VirtualSpaceEntity) {
@@ -386,12 +297,7 @@ class OctoViewModel(
         viewModelScope.launch {
             val resolved = deviceProfileManager?.selectPreset(profile.presetKey, space.id) ?: profile
             activeDeviceProfileFlow.value = resolved
-            repository.updateSpace(
-                space.copy(
-                    deviceModelPreset = resolved.presetKey,
-                    virtualDpi = resolved.densityDpi
-                )
-            )
+            repository.updateSpace(space.copy(deviceModelPreset = resolved.presetKey, virtualDpi = resolved.densityDpi))
         }
     }
 
@@ -401,12 +307,7 @@ class OctoViewModel(
             activeDeviceProfileFlow.value = saved
             availableDeviceProfilesFlow.value =
                 deviceProfileManager?.getAvailableProfiles() ?: DeviceProfileManager.availablePresets()
-            repository.updateSpace(
-                space.copy(
-                    deviceModelPreset = saved.presetKey,
-                    virtualDpi = saved.densityDpi
-                )
-            )
+            repository.updateSpace(space.copy(deviceModelPreset = saved.presetKey, virtualDpi = saved.densityDpi))
             statusMessageFlow.value = formatText(
                 R.string.status_custom_profile_saved,
                 "Saved custom profile \"${saved.displayName}\"",
@@ -420,50 +321,19 @@ class OctoViewModel(
             deviceProfileManager?.deleteCustomProfile(profileId, space?.id)
             availableDeviceProfilesFlow.value =
                 deviceProfileManager?.getAvailableProfiles() ?: DeviceProfileManager.availablePresets()
-            val fallback = deviceProfileManager?.getActiveProfile(space?.id)
-                ?: DeviceProfileManager.rogPhone8Pro()
+            val fallback = deviceProfileManager?.getActiveProfile(space?.id) ?: DeviceProfileManager.rogPhone8Pro()
             activeDeviceProfileFlow.value = fallback
             if (space != null) {
-                repository.updateSpace(
-                    space.copy(
-                        deviceModelPreset = fallback.presetKey,
-                        virtualDpi = fallback.densityDpi
-                    )
-                )
+                repository.updateSpace(space.copy(deviceModelPreset = fallback.presetKey, virtualDpi = fallback.densityDpi))
             }
-            statusMessageFlow.value = formatText(
-                R.string.status_custom_profile_removed,
-                "Removed custom hardware profile"
-            )
-        }
-    }
-
-    fun deleteSpace(spaceId: Long) {
-        viewModelScope.launch {
-            if (uiState.value.spaces.size <= 1) {
-                statusMessageFlow.value = formatText(
-                    R.string.status_space_min_one,
-                    "At least one Virtual Space must remain active"
-                )
-                return@launch
-            }
-            repository.deleteSpace(spaceId)
-            if (selectedSpaceIdFlow.value == spaceId) {
-                selectedSpaceIdFlow.value = null
-                preferencesStore?.setSelectedSpaceId(null)
-            }
-            statusMessageFlow.value = formatText(
-                R.string.status_space_removed,
-                "Virtual Space removed"
-            )
+            statusMessageFlow.value = formatText(R.string.status_custom_profile_removed, "Removed custom hardware profile")
         }
     }
 
     fun refreshInstalledApps() {
         viewModelScope.launch {
             isScanningAppsFlow.value = true
-            val apps = repository.scanDeviceApps()
-            installedAppsFlow.value = apps
+            installedAppsFlow.value = repository.scanDeviceApps()
             isScanningAppsFlow.value = false
         }
     }
@@ -538,8 +408,7 @@ class OctoViewModel(
         launchSessionAppFlow.value = null
     }
 
-    fun hasWorkProfileTarget(packageName: String): Boolean =
-        repository.hasWorkProfileTarget(packageName)
+    fun hasWorkProfileTarget(packageName: String): Boolean = repository.hasWorkProfileTarget(packageName)
 
     fun launchAppFromSession(app: VirtualAppEntity, preferWorkProfile: Boolean = false) {
         viewModelScope.launch {
@@ -550,23 +419,26 @@ class OctoViewModel(
             launchSessionAppFlow.value = null
             if (inspectedWorkspaceStatsFlow.value != null && space != null) {
                 inspectedWorkspaceStatsFlow.value = repository.inspectInstanceWorkspace(space.id, app.id)
+                inspectedWorkerSlotFlow.value = repository.getWorkerSlotForInstance(space.id, app.id)
             }
             statusMessageFlow.value = when (mode) {
-                LaunchTargetMode.WORK_PROFILE ->
-                    "Launched ${app.displayName} (${app.instanceLabel}) in Work Profile"
-                LaunchTargetMode.HOST_LAUNCHER ->
-                    formatText(
-                        R.string.status_app_launched,
-                        "Launched ${app.displayName} (${app.instanceLabel})",
-                        app.displayName,
-                        app.instanceLabel
-                    )
-                null ->
-                    formatText(
-                        R.string.status_app_launch_failed,
-                        "Package ${app.packageName} cannot be launched directly on this device",
-                        app.packageName
-                    )
+                LaunchTargetMode.WORK_PROFILE -> formatText(
+                    R.string.status_app_launched_work_profile,
+                    "Launched ${app.displayName} (${app.instanceLabel}) in Work Profile",
+                    app.displayName,
+                    app.instanceLabel
+                )
+                LaunchTargetMode.HOST_LAUNCHER -> formatText(
+                    R.string.status_app_launched,
+                    "Launched ${app.displayName} (${app.instanceLabel})",
+                    app.displayName,
+                    app.instanceLabel
+                )
+                null -> formatText(
+                    R.string.status_app_launch_failed,
+                    "Package ${app.packageName} cannot be launched directly on this device",
+                    app.packageName
+                )
             }
         }
     }
@@ -574,6 +446,7 @@ class OctoViewModel(
     fun inspectInstanceWorkspace(spaceId: Long, appId: Long) {
         viewModelScope.launch {
             inspectedWorkspaceStatsFlow.value = repository.inspectInstanceWorkspace(spaceId, appId)
+            inspectedWorkerSlotFlow.value = repository.getWorkerSlotForInstance(spaceId, appId)
         }
     }
 
@@ -581,6 +454,7 @@ class OctoViewModel(
         viewModelScope.launch {
             repository.resetInstanceWorkspace(app.spaceId, app.id)
             inspectedWorkspaceStatsFlow.value = repository.inspectInstanceWorkspace(app.spaceId, app.id)
+            inspectedWorkerSlotFlow.value = repository.getWorkerSlotForInstance(app.spaceId, app.id)
             statusMessageFlow.value = formatText(
                 R.string.status_workspace_reset,
                 "Cleared local session data for ${app.displayName} (${app.instanceLabel})",
@@ -591,9 +465,7 @@ class OctoViewModel(
     }
 
     fun refreshDeviceBridge() {
-        viewModelScope.launch {
-            deviceBridgeFlow.value = repository.inspectDeviceBridge()
-        }
+        viewModelScope.launch { deviceBridgeFlow.value = repository.inspectDeviceBridge() }
     }
 
     fun getMissingRuntimePermissions(): Array<String> = repository.getMissingRuntimePermissions()
@@ -613,17 +485,13 @@ class OctoViewModel(
     }
 
     fun onVaultUriPicked(uri: Uri?) {
-        if (uri != null) {
-            attachedVaultUrisFlow.update { current ->
-                val updated = if (current.contains(uri)) current else (listOf(uri) + current).take(20)
-                viewModelScope.launch { preferencesStore?.setAttachedVaultUris(updated) }
-                updated
-            }
-            statusMessageFlow.value = formatText(
-                R.string.status_vault_imported,
-                "Imported media/document into Virtual Vault"
-            )
+        if (uri == null) return
+        attachedVaultUrisFlow.update { current ->
+            val updated = if (current.contains(uri)) current else (listOf(uri) + current).take(20)
+            viewModelScope.launch { preferencesStore?.setAttachedVaultUris(updated) }
+            updated
         }
+        statusMessageFlow.value = formatText(R.string.status_vault_imported, "Imported media/document into Virtual Vault")
     }
 
     fun removeVaultUri(uri: Uri) {
@@ -632,21 +500,14 @@ class OctoViewModel(
             viewModelScope.launch { preferencesStore?.setAttachedVaultUris(updated) }
             updated
         }
-        statusMessageFlow.value = formatText(
-            R.string.status_vault_removed,
-            "Removed attachment from Virtual Vault"
-        )
+        statusMessageFlow.value = formatText(R.string.status_vault_removed, "Removed attachment from Virtual Vault")
     }
 
     fun onStorageTreePicked(uri: Uri?) {
-        if (uri != null) {
-            repository.persistStorageTreeUri(uri)
-            refreshDeviceBridge()
-            statusMessageFlow.value = formatText(
-                R.string.status_storage_granted,
-                "Storage folder access granted to Cipher Virtual"
-            )
-        }
+        if (uri == null) return
+        repository.persistStorageTreeUri(uri)
+        refreshDeviceBridge()
+        statusMessageFlow.value = formatText(R.string.status_storage_granted, "Storage folder access granted to Cipher Virtual")
     }
 
     fun toggleTheme() {
@@ -662,15 +523,9 @@ class OctoViewModel(
         boundIntegrityService = service
         if (service != null) {
             integrityManager.stopPeriodicChecks()
-            if (periodicIntegrityEnabledFlow.value) {
-                service.startPeriodicVerification()
-            } else {
-                service.stopPeriodicVerification()
-            }
+            if (periodicIntegrityEnabledFlow.value) service.startPeriodicVerification() else service.stopPeriodicVerification()
             integrityCollectorJob = viewModelScope.launch {
-                service.statusFlow.collect { snapshot ->
-                    integrityStatusFlow.value = snapshot
-                }
+                service.statusFlow.collect { integrityStatusFlow.value = it }
             }
         } else {
             integrityCollectorJob = null
@@ -684,16 +539,12 @@ class OctoViewModel(
             fallbackTelemetryJob?.cancel()
             fallbackTelemetryJob = null
             val state = uiState.value
-            service.updateTrackedContainers(state.spaces, state.allVirtualApps)
-            if (isForegroundActiveFlow.value) {
-                service.startMonitoring()
-            } else {
-                service.stopMonitoring()
+            viewModelScope.launch(Dispatchers.Default) {
+                service.updateTrackedContainers(state.spaces, state.allVirtualApps)
             }
+            if (isForegroundActiveFlow.value) service.startMonitoring() else service.stopMonitoring()
             resourceCollectorJob = viewModelScope.launch {
-                service.telemetry.collect { snapshot ->
-                    resourceTelemetryFlow.value = snapshot
-                }
+                service.telemetry.collect { resourceTelemetryFlow.value = it }
             }
         } else {
             resourceCollectorJob = null
@@ -727,13 +578,15 @@ class OctoViewModel(
     fun refreshResourceTelemetry() {
         val service = boundResourceService
         val currentState = uiState.value
-        if (service != null) {
-            service.updateTrackedContainers(currentState.spaces, currentState.allVirtualApps)
-        } else {
-            resourceTelemetryFlow.value = resourceSampler.captureSnapshot(
-                spaces = currentState.spaces,
-                virtualApps = currentState.allVirtualApps
-            )
+        viewModelScope.launch(Dispatchers.Default) {
+            if (service != null) {
+                service.updateTrackedContainers(currentState.spaces, currentState.allVirtualApps)
+            } else {
+                resourceTelemetryFlow.value = resourceSampler.captureSnapshot(
+                    spaces = currentState.spaces,
+                    virtualApps = currentState.allVirtualApps
+                )
+            }
         }
     }
 
@@ -750,9 +603,8 @@ class OctoViewModel(
         super.onCleared()
     }
 
-    private fun formatText(resId: Int, fallback: String, vararg args: Any): String {
-        return stringLookup?.invoke(resId, args) ?: fallback
-    }
+    private fun formatText(resId: Int, fallback: String, vararg args: Any): String =
+        stringLookup?.invoke(resId, args) ?: fallback
 
     private data class CoreData(
         val spaces: List<VirtualSpaceEntity>,
@@ -771,6 +623,7 @@ class OctoViewModel(
         val deviceBridge: DeviceBridgeSnapshot,
         val attachedVaultUris: List<Uri>,
         val inspectedWorkspaceStats: InstanceWorkspaceStats?,
+        val inspectedWorkerSlot: String?,
         val isForegroundActive: Boolean
     )
 

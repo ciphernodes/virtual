@@ -1,4 +1,4 @@
-package com.ciphernodes.ciphervirtual.security
+package com.example.security
 
 import android.content.Context
 import android.content.pm.PackageManager

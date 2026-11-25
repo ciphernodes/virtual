@@ -40,6 +40,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -64,6 +65,7 @@ import com.example.data.hardware.DeviceProfile
 import com.example.data.model.VirtualAppEntity
 import com.example.data.model.VirtualSpaceEntity
 import com.example.ui.theme.spaceAccentColors
+import kotlinx.coroutines.delay
 
 @Composable
 fun AppIconBadge(
@@ -167,11 +169,29 @@ fun VirtualLaunchSessionDialog(
     val perfModes = listOf("Balanced", "Turbo", "Battery")
     val haptics = LocalHapticFeedback.current
     val spaceAccent = spaceAccentColors(space?.accentIndex ?: 0)
-    var labelDraft by remember(app.id, app.instanceLabel) { mutableStateOf(app.instanceLabel) }
+    var labelDraft by remember(app.id) { mutableStateOf(app.instanceLabel) }
     var preferWorkProfile by remember(app.id, hasWorkProfile) { mutableStateOf(false) }
 
+    fun flushLabelDraft() {
+        val trimmed = labelDraft.trim()
+        if (trimmed.isNotBlank() && trimmed != app.instanceLabel) {
+            onRenameInstance(trimmed)
+        }
+    }
+
+    LaunchedEffect(app.id, labelDraft) {
+        val trimmed = labelDraft.trim()
+        if (trimmed.isNotBlank() && trimmed != app.instanceLabel) {
+            delay(350L)
+            onRenameInstance(trimmed)
+        }
+    }
+
     AlertDialog(
-        onDismissRequest = onDismiss,
+        onDismissRequest = {
+            flushLabelDraft()
+            onDismiss()
+        },
         containerColor = MaterialTheme.colorScheme.surface,
         title = {
             Row(
@@ -192,7 +212,11 @@ fun VirtualLaunchSessionDialog(
                         overflow = TextOverflow.Ellipsis
                     )
                     Text(
-                        text = "${space?.name ?: "Virtual Space"} • ${app.instanceLabel}",
+                        text = stringResource(
+                            R.string.detail_subtitle_format,
+                            space?.name ?: stringResource(R.string.virtual_space_fallback),
+                            app.instanceLabel
+                        ),
                         style = MaterialTheme.typography.bodySmall,
                         color = spaceAccent.accent
                     )
@@ -221,34 +245,43 @@ fun VirtualLaunchSessionDialog(
                     ) {
                         SessionDetailRow(
                             icon = Icons.Rounded.Security,
-                            label = "Space Profile",
-                            value = space?.deviceModelPreset ?: "Native Hardware"
+                            label = stringResource(R.string.session_space_profile_label),
+                            value = space?.deviceModelPreset ?: stringResource(R.string.native_hardware_label)
                         )
                         activeDeviceProfile?.let { profile ->
                             SessionDetailRow(
                                 icon = Icons.Rounded.DeveloperBoard,
-                                label = "Device Spec",
-                                value = "${profile.manufacturer} ${profile.model} (API ${profile.sdkInt})"
+                                label = stringResource(R.string.session_device_spec_label),
+                                value = stringResource(
+                                    R.string.session_device_spec_format,
+                                    profile.manufacturer,
+                                    profile.model,
+                                    profile.sdkInt
+                                )
                             )
                             SessionDetailRow(
                                 icon = Icons.Rounded.Info,
-                                label = "Profile ID",
+                                label = stringResource(R.string.session_profile_id_label),
                                 value = profile.profileId.take(8)
                             )
                         }
                         SessionDetailRow(
                             icon = Icons.Rounded.Layers,
-                            label = "Virtual DPI",
-                            value = "${space?.virtualDpi ?: 440} dpi • ${if (space?.isolatedStorage == true) "Workspace Saved" else "Shared"}"
+                            label = stringResource(R.string.session_virtual_dpi_label),
+                            value = stringResource(
+                                if (space?.isolatedStorage == true) R.string.session_dpi_saved_format
+                                else R.string.session_dpi_shared_format,
+                                space?.virtualDpi ?: 440
+                            )
                         )
                         SessionDetailRow(
                             icon = Icons.Rounded.Layers,
-                            label = "Host Panel",
+                            label = stringResource(R.string.session_host_panel_label),
                             value = hostDisplaySummary
                         )
                         SessionDetailRow(
                             icon = Icons.Rounded.Work,
-                            label = "Launch Target",
+                            label = stringResource(R.string.session_launch_target_label),
                             value = if (hasWorkProfile) {
                                 stringResource(R.string.session_launch_mode_work_profile)
                             } else {
@@ -265,9 +298,9 @@ fun VirtualLaunchSessionDialog(
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("Launch in Work Profile", style = MaterialTheme.typography.titleSmall)
+                            Text(stringResource(R.string.launch_in_work_profile_title), style = MaterialTheme.typography.titleSmall)
                             Text(
-                                "Uses Android CrossProfileApps when managed profile is present",
+                                stringResource(R.string.launch_in_work_profile_subtitle),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -282,14 +315,8 @@ fun VirtualLaunchSessionDialog(
 
                 OutlinedTextField(
                     value = labelDraft,
-                    onValueChange = { updated ->
-                        val clean = updated.take(24)
-                        labelDraft = clean
-                        if (clean.isNotBlank()) {
-                            onRenameInstance(clean.trim())
-                        }
-                    },
-                    label = { Text("Instance Label") },
+                    onValueChange = { updated -> labelDraft = updated.take(24) },
+                    label = { Text(stringResource(R.string.instance_label_field)) },
                     singleLine = true,
                     shape = MaterialTheme.shapes.medium,
                     modifier = Modifier
@@ -298,7 +325,7 @@ fun VirtualLaunchSessionDialog(
                 )
 
                 Text(
-                    text = "Engine Performance Profile",
+                    text = stringResource(R.string.engine_performance_profile_label),
                     style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -312,6 +339,7 @@ fun VirtualLaunchSessionDialog(
                             selected = selected,
                             onClick = {
                                 haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                flushLabelDraft()
                                 onChangePerformanceMode(mode)
                             },
                             label = { Text(mode, style = MaterialTheme.typography.labelMedium) },
@@ -340,6 +368,7 @@ fun VirtualLaunchSessionDialog(
                     FilledTonalButton(
                         onClick = {
                             haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                            flushLabelDraft()
                             onCloneInstance()
                         },
                         modifier = Modifier
@@ -349,10 +378,13 @@ fun VirtualLaunchSessionDialog(
                     ) {
                         Icon(Icons.Rounded.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(4.dp))
-                        Text("Clone")
+                        Text(stringResource(R.string.clone_action))
                     }
                     FilledTonalButton(
-                        onClick = onInspectDetails,
+                        onClick = {
+                            flushLabelDraft()
+                            onInspectDetails()
+                        },
                         modifier = Modifier
                             .weight(1f)
                             .height(48.dp)
@@ -373,16 +405,22 @@ fun VirtualLaunchSessionDialog(
         },
         dismissButton = {
             TextButton(
-                onClick = onDismiss,
-                modifier = Modifier.testTag("session_cancel_button")
+                onClick = {
+                    flushLabelDraft()
+                    onDismiss()
+                },
+                modifier = Modifier
+                    .height(48.dp)
+                    .testTag("session_cancel_button")
             ) {
-                Text("Close")
+                Text(stringResource(R.string.close_action))
             }
         },
         confirmButton = {
             Button(
                 onClick = {
                     haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                    flushLabelDraft()
                     onLaunchNow(preferWorkProfile)
                 },
                 colors = ButtonDefaults.buttonColors(
@@ -399,7 +437,7 @@ fun VirtualLaunchSessionDialog(
                     modifier = Modifier.size(18.dp)
                 )
                 Spacer(Modifier.width(4.dp))
-                Text("Launch Now")
+                Text(stringResource(R.string.launch_now_action))
             }
         }
     )

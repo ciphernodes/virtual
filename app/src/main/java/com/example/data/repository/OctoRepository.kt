@@ -8,6 +8,8 @@ import com.example.data.hardware.DeviceProfile
 import com.example.data.hardware.LaunchTargetMode
 import com.example.data.local.InstanceWorkspaceStats
 import com.example.data.local.OctoDao
+import com.example.data.local.WorkspaceManager
+import com.example.data.local.WorkspaceProcessRouter
 import com.example.data.local.WorkspaceStorageManager
 import com.example.data.model.DeviceBridgeSnapshot
 import com.example.data.model.InstalledAppInfo
@@ -19,7 +21,9 @@ class OctoRepository(
     private val dao: OctoDao,
     private val scanner: DeviceAppScanner,
     private val bridgeManager: DeviceBridgeManager,
-    private val workspaceStorage: WorkspaceStorageManager? = null
+    private val workspaceStorage: WorkspaceStorageManager? = null,
+    private val workspaceManager: WorkspaceManager? = null,
+    private val workspaceRouter: WorkspaceProcessRouter? = null
 ) {
     val spaces: Flow<List<VirtualSpaceEntity>> = dao.observeSpaces()
     val allVirtualApps: Flow<List<VirtualAppEntity>> = dao.observeAllApps()
@@ -28,6 +32,7 @@ class OctoRepository(
         dao.observeAppsForSpace(spaceId)
 
     suspend fun ensureDefaultSpaces() {
+        workspaceManager?.initialize()
         val existingSpaces = dao.getAllSpacesSnapshot()
         if (existingSpaces.isEmpty()) {
             dao.insertSpace(
@@ -50,24 +55,41 @@ class OctoRepository(
                 workspaceStorage?.deleteSpaceWorkspaces(extra.id)
             }
         }
-    }
 
-    suspend fun createSpace(name: String, tag: String, accentIndex: Int): Long {
-        return dao.insertSpace(
-            VirtualSpaceEntity(
-                name = name.trim(),
-                tag = tag.trim().uppercase().take(6).ifEmpty { "SPACE" },
-                accentIndex = accentIndex
-            )
-        )
+        workspaceRouter?.hydrateFromManager()
+
+        val allApps = dao.getAllAppsSnapshot().sortedBy { it.addedAt }
+        val activeInstanceIds = HashSet<String>(allApps.size)
+        allApps.forEachIndexed { index, app ->
+            val instanceId = multiInstanceId(app.spaceId, app.id)
+            activeInstanceIds.add(instanceId)
+            val existingInstance = workspaceManager?.getInstance(instanceId)
+            if (existingInstance == null) {
+                registerManagedInstance(
+                    spaceId = app.spaceId,
+                    appId = app.id,
+                    label = "${app.displayName} (${app.instanceLabel})",
+                    packageName = app.packageName,
+                    activate = index == 0 && workspaceManager?.getActiveInstance() == null
+                )
+            } else {
+                workspaceRouter?.assignAndPersistWorkerSlot(instanceId)
+            }
+        }
+
+        // Remove orphaned Room-managed app instance entries that were deleted externally.
+        workspaceManager?.listInstances()
+            ?.filter { it.instanceId.startsWith("space_") && it.instanceId.contains("_app_") }
+            ?.filter { it.instanceId !in activeInstanceIds }
+            ?.forEach { stale ->
+                workspaceRouter?.releaseWorkerSlot(stale.instanceId)
+                workspaceManager.removeInstance(stale.instanceId)
+            }
+
+        workspaceRouter?.pruneUnregisteredSlots()
     }
 
     suspend fun updateSpace(space: VirtualSpaceEntity) = dao.updateSpace(space)
-
-    suspend fun deleteSpace(spaceId: Long) {
-        dao.deleteSpace(spaceId)
-        workspaceStorage?.deleteSpaceWorkspaces(spaceId)
-    }
 
     suspend fun scanDeviceApps(): List<InstalledAppInfo> = scanner.scanInstalledLauncherApps()
 
@@ -90,7 +112,7 @@ class OctoRepository(
     ): Long {
         val existingCount = dao.countPackageInSpace(spaceId, installedApp.packageName)
         val instanceLabel = "Instance #${existingCount + 1}"
-        return dao.insertApp(
+        val insertedId = dao.insertApp(
             VirtualAppEntity(
                 spaceId = spaceId,
                 packageName = installedApp.packageName,
@@ -99,21 +121,38 @@ class OctoRepository(
                 performanceMode = if (installedApp.isGame) "Turbo" else "Balanced"
             )
         )
+        registerManagedInstance(
+            spaceId = spaceId,
+            appId = insertedId,
+            label = "${installedApp.label} ($instanceLabel)",
+            packageName = installedApp.packageName,
+            activate = true
+        )
+        return insertedId
     }
 
     suspend fun duplicateVirtualApp(source: VirtualAppEntity): Long {
         val existingCount = dao.countPackageInSpace(source.spaceId, source.packageName)
-        return dao.insertApp(
+        val instanceLabel = "Instance #${existingCount + 1}"
+        val insertedId = dao.insertApp(
             VirtualAppEntity(
                 spaceId = source.spaceId,
                 packageName = source.packageName,
                 displayName = source.displayName,
-                instanceLabel = "Instance #${existingCount + 1}",
+                instanceLabel = instanceLabel,
                 performanceMode = source.performanceMode,
                 notes = source.notes,
                 lastProfileId = source.lastProfileId
             )
         )
+        registerManagedInstance(
+            spaceId = source.spaceId,
+            appId = insertedId,
+            label = "${source.displayName} ($instanceLabel)",
+            packageName = source.packageName,
+            activate = true
+        )
+        return insertedId
     }
 
     suspend fun updateVirtualApp(app: VirtualAppEntity) = dao.updateApp(app)
@@ -124,6 +163,19 @@ class OctoRepository(
         profile: DeviceProfile?
     ) {
         dao.recordAppLaunch(app.id, System.currentTimeMillis(), profile?.profileId)
+        val instanceId = multiInstanceId(app.spaceId, app.id)
+        if (workspaceManager?.getInstance(instanceId) == null) {
+            registerManagedInstance(
+                spaceId = app.spaceId,
+                appId = app.id,
+                label = "${app.displayName} (${app.instanceLabel})",
+                packageName = app.packageName,
+                activate = true
+            )
+        } else {
+            workspaceManager.switchActiveInstance(instanceId)
+            workspaceRouter?.assignAndPersistWorkerSlot(instanceId)
+        }
         if (space != null && space.isolatedStorage) {
             workspaceStorage?.recordSessionMetadata(space, app, profile)
         }
@@ -131,18 +183,74 @@ class OctoRepository(
 
     suspend fun removeVirtualApp(app: VirtualAppEntity) {
         dao.deleteApp(app.id)
+        val instanceId = multiInstanceId(app.spaceId, app.id)
+        workspaceRouter?.releaseWorkerSlot(instanceId)
+        workspaceManager?.removeInstance(instanceId)
         workspaceStorage?.resetInstanceWorkspace(app.spaceId, app.id)
     }
 
-    suspend fun inspectInstanceWorkspace(spaceId: Long, appId: Long): InstanceWorkspaceStats? =
-        workspaceStorage?.inspectInstanceWorkspace(spaceId, appId)
+    suspend fun inspectInstanceWorkspace(spaceId: Long, appId: Long): InstanceWorkspaceStats? {
+        val storage = workspaceStorage ?: return null
+        val instanceId = multiInstanceId(spaceId, appId)
+        val multiStats = storage.inspectInstanceStorage(instanceId).getOrNull()
+        val legacyStats = storage.inspectInstanceWorkspace(spaceId, appId)
+        return if (multiStats != null && (storage.instanceExists(instanceId) || legacyStats.fileCount == 0)) {
+            InstanceWorkspaceStats(
+                directoryPath = multiStats.directoryPath,
+                sizeBytes = multiStats.sizeBytes + legacyStats.sizeBytes,
+                fileCount = multiStats.fileCount + legacyStats.fileCount,
+                lastSessionRecordedAt = listOfNotNull(
+                    multiStats.lastSessionRecordedAt,
+                    legacyStats.lastSessionRecordedAt
+                ).maxOrNull()
+            )
+        } else {
+            legacyStats
+        }
+    }
 
-    suspend fun resetInstanceWorkspace(spaceId: Long, appId: Long): Boolean =
-        workspaceStorage?.resetInstanceWorkspace(spaceId, appId) ?: false
+    suspend fun resetInstanceWorkspace(spaceId: Long, appId: Long): Boolean {
+        val instanceId = multiInstanceId(spaceId, appId)
+        val managerCleared = workspaceManager?.clearInstanceData(instanceId)?.isSuccess
+        val storageCleared = managerCleared ?: workspaceStorage?.resetInstanceStorage(instanceId)?.isSuccess ?: false
+        val legacyCleared = workspaceStorage?.resetInstanceWorkspace(spaceId, appId) ?: false
+        return storageCleared || legacyCleared
+    }
+
+    fun getWorkerSlotForInstance(spaceId: Long, appId: Long): String? {
+        val instanceId = multiInstanceId(spaceId, appId)
+        return workspaceRouter?.getAssignedWorkerSlot(instanceId)
+            ?: workspaceManager?.getInstance(instanceId)?.workerSlot
+    }
 
     suspend fun inspectDeviceBridge(): DeviceBridgeSnapshot = bridgeManager.inspectDeviceBridge()
 
     fun getMissingRuntimePermissions(): Array<String> = bridgeManager.getMissingRuntimePermissions()
 
     fun persistStorageTreeUri(uri: Uri) = bridgeManager.persistStorageTreeUri(uri)
+
+    private suspend fun registerManagedInstance(
+        spaceId: Long,
+        appId: Long,
+        label: String,
+        packageName: String,
+        activate: Boolean
+    ) {
+        val instanceId = multiInstanceId(spaceId, appId)
+        if (workspaceManager != null) {
+            workspaceManager.createInstance(
+                label = label,
+                targetPackageName = packageName,
+                instanceId = instanceId,
+                activate = activate
+            )
+        } else {
+            workspaceStorage?.initializeInstanceStorage(instanceId)
+        }
+        workspaceRouter?.assignAndPersistWorkerSlot(instanceId)
+    }
+
+    companion object {
+        fun multiInstanceId(spaceId: Long, appId: Long): String = "space_${spaceId}_app_${appId}"
+    }
 }

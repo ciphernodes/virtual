@@ -1,18 +1,20 @@
 package com.example
 
-import com.ciphernodes.ciphervirtual.monitoring.ResourceTelemetrySnapshot
-import com.ciphernodes.ciphervirtual.monitoring.SpaceResourceUsage
-import com.ciphernodes.ciphervirtual.monitoring.StabilityLevel
-import com.ciphernodes.ciphervirtual.security.IntegrityStatusSnapshot
-import com.ciphernodes.ciphervirtual.security.IntegrityVerdictResult
-import com.ciphernodes.ciphervirtual.security.IntegrityVerificationState
 import com.example.data.hardware.DeviceProfile
 import com.example.data.hardware.DeviceProfileManager
+import com.example.data.local.WorkspaceManager
+import com.example.data.local.WorkspaceProcessRouter
 import com.example.data.local.WorkspaceStorageManager
 import com.example.data.model.DeviceBridgeSnapshot
 import com.example.data.model.InstalledAppInfo
 import com.example.data.model.VirtualAppEntity
 import com.example.data.model.VirtualSpaceEntity
+import com.example.monitoring.ResourceTelemetrySnapshot
+import com.example.monitoring.SpaceResourceUsage
+import com.example.monitoring.StabilityLevel
+import com.example.security.IntegrityStatusSnapshot
+import com.example.security.IntegrityVerdictResult
+import com.example.security.IntegrityVerificationState
 import com.example.ui.OctoUiState
 import com.example.ui.navigation.OctoRoute
 import kotlinx.coroutines.test.runTest
@@ -22,6 +24,7 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
 import java.nio.file.Files
 
 class CipherVirtualUnitTests {
@@ -284,5 +287,168 @@ class CipherVirtualUnitTests {
         val bridge = DeviceBridgeSnapshot()
         assertFalse(bridge.allRequiredGranted)
         assertTrue(bridge.permissions.isEmpty())
+    }
+
+    @Test
+    fun workspaceStorageManager_initializesResetsAndDeletesMultiInstanceDirectories() = runTest {
+        val internalRoot = Files.createTempDirectory("cipher_ws_internal").toFile()
+        val externalRoot = Files.createTempDirectory("cipher_ws_external").toFile()
+        try {
+            val storage = WorkspaceStorageManager(internalRoot, externalRoot)
+
+            val alphaPaths = storage.initializeInstanceStorage("alpha_1").getOrThrow()
+            val betaPaths = storage.initializeInstanceStorage("beta_2").getOrThrow()
+
+            assertTrue(alphaPaths.dataDir.isDirectory)
+            assertTrue(alphaPaths.cacheDir.isDirectory)
+            assertTrue(alphaPaths.databasesDir.isDirectory)
+            assertTrue(alphaPaths.sharedPrefsDir.isDirectory)
+            assertTrue(alphaPaths.externalDataDir?.isDirectory == true)
+            assertTrue(alphaPaths.externalCacheDir?.isDirectory == true)
+
+            File(alphaPaths.dataDir, "session.dat").writeText("alpha-secret")
+            alphaPaths.resolvePreferenceFile("prefs").writeText("<map/>")
+            File(betaPaths.dataDir, "session.dat").writeText("beta-secret")
+
+            val alphaStats = storage.inspectInstanceStorage("alpha_1").getOrThrow()
+            assertEquals(2, alphaStats.fileCount)
+            assertTrue(alphaStats.sizeBytes > 0L)
+
+            val resetPaths = storage.resetInstanceStorage("alpha_1").getOrThrow()
+            assertTrue(resetPaths.dataDir.isDirectory)
+            assertTrue(resetPaths.sharedPrefsDir.isDirectory)
+            assertEquals(0, storage.inspectInstanceStorage("alpha_1").getOrThrow().fileCount)
+            assertTrue(File(betaPaths.dataDir, "session.dat").exists())
+
+            assertTrue(storage.deleteInstanceStorage("beta_2").getOrThrow())
+            assertFalse(storage.instanceExists("beta_2"))
+            assertFalse(betaPaths.externalBaseDir?.exists() == true)
+            assertTrue(storage.instanceExists("alpha_1"))
+
+            assertTrue(runCatching { storage.sanitizeInstanceId("../escape") }.isFailure)
+            assertTrue(runCatching { storage.sanitizeInstanceId("dir/sub") }.isFailure)
+            assertTrue(runCatching { storage.sanitizeInstanceId("   ") }.isFailure)
+        } finally {
+            internalRoot.deleteRecursively()
+            externalRoot.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun workspaceManager_persistsCreatesSwitchesClearsAndRemovesInstances() = runTest {
+        val tempRoot = Files.createTempDirectory("cipher_ws_manager").toFile()
+        try {
+            val storage = WorkspaceStorageManager(tempRoot)
+            var now = 1000L
+            val manager = WorkspaceManager(storageManager = storage, clock = { now += 10L; now })
+            manager.initialize().getOrThrow()
+
+            val work = manager.createInstance(
+                label = "Work \"Primary\"",
+                targetPackageName = "com.example.chat",
+                instanceId = "work_1",
+                activate = true
+            ).getOrThrow()
+            assertTrue(work.isActive)
+
+            val personal = manager.createInstance(
+                label = "Personal",
+                targetPackageName = "com.example.chat",
+                instanceId = "personal_2",
+                activate = false
+            ).getOrThrow()
+            assertFalse(personal.isActive)
+            assertEquals("work_1", manager.getActiveInstance()?.instanceId)
+
+            val reloaded = WorkspaceManager(storage)
+            val persistedList = reloaded.initialize().getOrThrow()
+            assertEquals(2, persistedList.size)
+            assertEquals("Work \"Primary\"", reloaded.getInstance("work_1")?.label)
+            assertEquals("work_1", reloaded.getActiveInstance()?.instanceId)
+
+            reloaded.switchActiveInstance("personal_2").getOrThrow()
+            assertEquals("personal_2", reloaded.getActiveInstance()?.instanceId)
+            assertFalse(reloaded.getInstance("work_1")?.isActive == true)
+
+            val personalDataFile = File(storage.getInstancePaths("personal_2").dataDir, "token.txt")
+            personalDataFile.writeText("abc123")
+            assertTrue(personalDataFile.exists())
+            reloaded.clearInstanceData("personal_2").getOrThrow()
+            assertFalse(personalDataFile.exists())
+            assertNotNull(reloaded.getInstance("personal_2"))
+
+            assertTrue(reloaded.removeInstance("personal_2").getOrThrow())
+            assertNull(reloaded.getInstance("personal_2"))
+            assertFalse(storage.instanceExists("personal_2"))
+            assertEquals("work_1", reloaded.getActiveInstance()?.instanceId)
+        } finally {
+            tempRoot.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun workspaceProcessRouter_assignsWorkerSlotsAndResolvesActivePaths() = runTest {
+        val tempRoot = Files.createTempDirectory("cipher_ws_router").toFile()
+        try {
+            val storage = WorkspaceStorageManager(tempRoot)
+            val manager = WorkspaceManager(storage)
+            manager.initialize().getOrThrow()
+            val router = WorkspaceProcessRouter(manager, storage)
+
+            val assignedSlots = (0 until 10).map { index ->
+                val id = "inst_$index"
+                manager.createInstance("Inst $index", "com.demo.app", instanceId = id).getOrThrow()
+                router.assignWorkerSlot(id).getOrThrow().workerProcessName
+            }
+            assertEquals((0..7).map { ":w$it" }, assignedSlots.take(8))
+            assertEquals(":w0", assignedSlots[8])
+            assertEquals(":w1", assignedSlots[9])
+
+            assertTrue(router.releaseWorkerSlot("inst_2"))
+            assertNull(router.getAssignedWorkerSlot("inst_2"))
+            manager.createInstance("Inst Extra", "com.demo.app", instanceId = "inst_extra").getOrThrow()
+            assertEquals(":w2", router.assignWorkerSlot("inst_extra").getOrThrow().workerProcessName)
+
+            manager.switchActiveInstance("inst_0").getOrThrow()
+            val activePaths = router.resolveActiveInstancePaths().getOrThrow()
+            assertEquals("inst_0", activePaths.instanceId)
+            val prefFile = router.resolvePreferenceFile("session").getOrThrow()
+            assertEquals(File(activePaths.sharedPrefsDir, "session.xml"), prefFile)
+            val dbFile = router.resolveDatabaseFile("cache.db").getOrThrow()
+            assertEquals(File(activePaths.databasesDir, "cache.db"), dbFile)
+        } finally {
+            tempRoot.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun workspaceProcessRouter_persistsAndHydratesWorkerSlotsAcrossRestarts() = runTest {
+        val tempRoot = Files.createTempDirectory("cipher_ws_slot_persist").toFile()
+        try {
+            val storage = WorkspaceStorageManager(tempRoot)
+            val manager = WorkspaceManager(storage)
+            manager.initialize().getOrThrow()
+            val router = WorkspaceProcessRouter(manager, storage)
+
+            manager.createInstance("Slot A", "com.demo.a", instanceId = "slot_a", activate = true).getOrThrow()
+            manager.createInstance("Slot B", "com.demo.b", instanceId = "slot_b", activate = false).getOrThrow()
+            router.assignAndPersistWorkerSlot("slot_a").getOrThrow()
+            router.assignAndPersistWorkerSlot("slot_b").getOrThrow()
+            assertEquals(":w0", manager.getInstance("slot_a")?.workerSlot)
+            assertEquals(":w1", manager.getInstance("slot_b")?.workerSlot)
+
+            val freshManager = WorkspaceManager(storage)
+            freshManager.initialize().getOrThrow()
+            val freshRouter = WorkspaceProcessRouter(freshManager, storage)
+            assertEquals(2, freshRouter.hydrateFromManager())
+            assertEquals(":w0", freshRouter.getAssignedWorkerSlot("slot_a"))
+            assertEquals(":w1", freshRouter.getAssignedWorkerSlot("slot_b"))
+
+            freshManager.createInstance("Slot C", "com.demo.c", instanceId = "slot_c", activate = false).getOrThrow()
+            val thirdSlot = freshRouter.assignAndPersistWorkerSlot("slot_c").getOrThrow().workerProcessName
+            assertEquals(":w2", thirdSlot)
+        } finally {
+            tempRoot.deleteRecursively()
+        }
     }
 }

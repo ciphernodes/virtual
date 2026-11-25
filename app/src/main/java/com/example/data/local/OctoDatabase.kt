@@ -12,13 +12,15 @@ import com.example.data.model.VirtualSpaceEntity
 @Database(
     entities = [
         VirtualSpaceEntity::class,
-        VirtualAppEntity::class
+        VirtualAppEntity::class,
+        WorkspaceInstance::class
     ],
-    version = 3,
+    version = 5,
     exportSchema = true
 )
 abstract class OctoDatabase : RoomDatabase() {
     abstract fun octoDao(): OctoDao
+    abstract fun workspaceInstanceDao(): WorkspaceInstanceDao
 
     companion object {
         @Volatile
@@ -42,6 +44,35 @@ abstract class OctoDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_3_4: Migration = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `workspace_instances` (
+                        `instanceId` TEXT NOT NULL,
+                        `label` TEXT NOT NULL,
+                        `targetPackageName` TEXT NOT NULL,
+                        `createdAt` INTEGER NOT NULL,
+                        `isActive` INTEGER NOT NULL,
+                        PRIMARY KEY(`instanceId`)
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_workspace_instances_targetPackageName` ON `workspace_instances` (`targetPackageName`)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_workspace_instances_isActive` ON `workspace_instances` (`isActive`)"
+                )
+            }
+        }
+
+        val MIGRATION_4_5: Migration = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE workspace_instances ADD COLUMN workerSlot TEXT")
+            }
+        }
+
         fun getInstance(context: Context): OctoDatabase {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -49,7 +80,7 @@ abstract class OctoDatabase : RoomDatabase() {
                     OctoDatabase::class.java,
                     "cipher_virtual.db"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
                     .build()
                     .also { INSTANCE = it }
             }
