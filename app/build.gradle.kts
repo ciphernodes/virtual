@@ -9,7 +9,7 @@ plugins {
 }
 
 android {
-  namespace = "com.example"
+  namespace = "com.cipher.virtual"
   compileSdk { version = release(36) { minorApiLevel = 1 } }
 
   defaultConfig {
@@ -18,6 +18,10 @@ android {
     targetSdk = 36
     versionCode = 1
     versionName = "1.0"
+
+    ndk {
+      abiFilters += listOf("arm64-v8a", "x86_64")
+    }
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     val integrityProjectNumber = (
@@ -76,6 +80,7 @@ android {
     buildConfig = true
   }
   testOptions { unitTests { isIncludeAndroidResources = true } }
+  sourceSets { getByName("test").assets.srcDir("$projectDir/schemas") }
   dependenciesInfo {
     includeInApk = false
     includeInBundle = true
@@ -146,6 +151,7 @@ dependencies {
   testImplementation(libs.androidx.compose.ui.test.junit4)
   testImplementation(libs.androidx.core)
   testImplementation(libs.androidx.junit)
+  testImplementation(libs.androidx.room.testing)
   testImplementation(libs.junit)
   testImplementation(libs.kotlinx.coroutines.test)
   testImplementation(libs.robolectric)

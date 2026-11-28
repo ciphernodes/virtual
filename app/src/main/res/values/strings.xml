@@ -232,4 +232,50 @@
     <string name="launch_in_work_profile_subtitle">Uses Android CrossProfileApps when managed profile is present</string>
     <string name="engine_performance_profile_label">Engine Performance Profile</string>
     <string name="launch_now_action">Launch Now</string>
+
+    <!-- Virtual App Container & Worker Host Service -->
+    <string name="virtual_app_fallback_name">Virtual App</string>
+    <string name="virtual_clone_fallback_label">Clone #1</string>
+    <string name="virtual_container_title_format">%1$s (%2$s)</string>
+    <string name="virtual_running_slot_format">RUNNING %1$s</string>
+    <string name="virtual_sandbox_env_title">Virtual Space Sandbox Environment</string>
+    <string name="virtual_mode_rooted">Rooted Kernel Namespace Mode</string>
+    <string name="virtual_mode_non_root">Non-Rooted User-Space Hook</string>
+    <string name="virtual_uid_format">Virtual UID: #%1$d</string>
+    <string name="virtual_process_slot_format">Process: %1$s</string>
+    <string name="virtual_io_redirections_format">I/O Redirections: %1$d</string>
+    <string name="virtual_syscall_summary_format">Native libc system calls (openat, stat, mkdir) for /data/data/%1$s are intercepted and redirected to this clone instance\'s isolated storage.</string>
+    <string name="virtual_isolated_paths_title">Isolated Instance Storage Paths</string>
+    <string name="virtual_path_private_data">Private Data</string>
+    <string name="virtual_path_databases">Databases</string>
+    <string name="virtual_path_shared_prefs">SharedPreferences</string>
+    <string name="virtual_path_cache">Cache</string>
+    <string name="virtual_wrote_file_format">Wrote isolated state file: %1$s (%2$d bytes)</string>
+    <string name="virtual_state_written_toast_format">Isolated state written to %1$s</string>
+    <string name="virtual_simulate_io_action">Simulate I/O Write</string>
+    <string name="virtual_files_list_toast_format">Files in %1$s: %2$s</string>
+    <string name="virtual_files_list_empty">No files yet</string>
+    <string name="virtual_files_count_format">Files (%1$d)</string>
+    <string name="virtual_launch_in_sandbox_format">Launch %1$s in Virtual Sandbox</string>
+    <string name="virtual_launch_error_format">Could not launch package: %1$s</string>
+    <string name="virtual_target_not_installed">Target package not installed as APK on host</string>
+    <string name="virtual_process_channel_name">Virtual Process Host</string>
+    <string name="virtual_process_channel_description">Manages isolated virtual workspace worker processes</string>
+    <string name="virtual_process_notification_title">Cipher Virtual Sandbox Host</string>
+    <string name="virtual_process_notification_text">Hosting isolated virtual application instances</string>
+    <string name="virtual_container_activity_label">Virtual Sandbox Container</string>
+    <string name="virtual_os_pid_format">OS PID: %1$d</string>
+
+    <!-- CipherHostService & Doze Exemption Rationale -->
+    <string name="cipher_host_channel_name">Cipher Host Sync</string>
+    <string name="cipher_host_channel_description">Keeps isolated workspace state and worker host synchronization active across Doze</string>
+    <string name="cipher_host_notification_title">Cipher Virtual Host Active</string>
+    <string name="cipher_host_notification_text">Synchronizing workspace registry and container state</string>
+    <string name="battery_rationale_title">Allow Unrestricted Background Execution</string>
+    <string name="battery_rationale_body">Cipher Virtual runs CipherHostService to keep workspace registries synced across Doze mode and re-arm automatically after device reboot (BOOT_COMPLETED). Exempting the app from battery optimization prevents Android from suspending active virtual workspaces.</string>
+    <string name="battery_rationale_cta">Allow Unrestricted Battery</string>
+    <string name="native_engine_label">Native Engine (.so)</string>
+    <string name="native_engine_loaded">Loaded</string>
+    <string name="native_engine_unavailable_format">Unavailable (%1$s)</string>
+    <string name="virtual_native_unavailable_summary">libciphervirtual.so is not loaded in this runtime (%1$s). Directory paths above are isolated inside WorkspaceContextWrapper; native libc syscall interception is inactive.</string>
 </resources>

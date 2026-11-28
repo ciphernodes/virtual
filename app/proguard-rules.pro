@@ -44,6 +44,9 @@
 }
 
 # Preserve JNI native methods and their owning class descriptors
+-keepclasseswithmembernames class * {
+    native <methods>;
+}
 -keepclasseswithmembernames,includedescriptorclasses class * {
     native <methods>;
 }
@@ -54,11 +57,13 @@
 -keepclassmembers @androidx.room.Entity class * { *; }
 -keep @androidx.room.Dao interface *
 
-# App data models, hardware profiles, security, and telemetry packages
--keep class com.example.data.model.** { *; }
--keep class com.example.data.hardware.DeviceProfile { *; }
--keep class com.ciphernodes.ciphervirtual.security.** { *; }
--keep class com.ciphernodes.ciphervirtual.monitoring.** { *; }
+# App data models, hardware profiles, virtualization, services, security, and telemetry packages
+-keep class com.cipher.virtual.data.model.** { *; }
+-keep class com.cipher.virtual.data.hardware.DeviceProfile { *; }
+-keep class com.cipher.virtual.virtualization.** { *; }
+-keep class com.cipher.virtual.service.** { *; }
+-keep class com.cipher.virtual.security.** { *; }
+-keep class com.cipher.virtual.monitoring.** { *; }
 
 # Google Play Integrity & GMS Tasks
 -keep class com.google.android.play.core.integrity.** { *; }
